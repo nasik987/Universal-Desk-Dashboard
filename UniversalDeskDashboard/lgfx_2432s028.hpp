@@ -22,12 +22,17 @@ public:
       cfg.pin_cs   = 15;
       cfg.pin_rst  = -1;
       cfg.pin_busy = -1;
-      cfg.panel_width  = 240;
-      cfg.panel_height = 320;
+      // CYD ILI9341 + LovyanGFX: drive the panel as landscape-native.
+      // This avoids the mirrored/partial-screen result seen with odd rotations.
+      cfg.panel_width   = 320;
+      cfg.panel_height  = 240;
+      cfg.memory_width  = 320;
+      cfg.memory_height = 240;
       cfg.offset_x = 0;
       cfg.offset_y = 0;
       cfg.offset_rotation = 0;
       cfg.rgb_order = true;
+      cfg.bus_shared = false;
       _panel.config(cfg);
     }
     {
