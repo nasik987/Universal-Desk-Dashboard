@@ -1,0 +1,17 @@
+{
+  "name": "Universal Desk Dashboard",
+  "version": "0.1.0",
+  "home_assistant_domain": "universal_desk_dashboard",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32",
+      "parts": [
+        {
+          "path": "firmware/UniversalDeskDashboard.merged.bin",
+          "offset": 0
+        }
+      ]
+    }
+  ]
+}
