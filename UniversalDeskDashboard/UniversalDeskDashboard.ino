@@ -149,7 +149,7 @@ void setTimerMinutes(int m){timerDurationSec=m*60;timerRunning=false;drawTimer()
 bool readTouch(uint16_t &x, uint16_t &y){
   if(!ts.touched()) return false;
   TS_Point p = ts.getPoint();
-  int tx = map(p.x, TOUCH_X_MIN, TOUCH_X_MAX, 0, 320);
+  int tx = map(p.x, TOUCH_X_MAX, TOUCH_X_MIN, 0, 320);
   int ty = map(p.y, TOUCH_Y_MIN, TOUCH_Y_MAX, 0, 240);
   x = constrain(tx, 0, 319);
   y = constrain(ty, 0, 239);
