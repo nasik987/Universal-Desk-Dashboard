@@ -7,9 +7,23 @@
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 #include <time.h>
-#include "lgfx_2432s028.hpp"
+#include <TFT_eSPI.h>
+#include <SPI.h>
+#include <XPT2046_Touchscreen.h>
 
-LGFX lcd;
+TFT_eSPI lcd = TFT_eSPI();
+
+#define T_CS   33
+#define T_IRQ  36
+#define T_CLK  25
+#define T_DIN  32
+#define T_DOUT 39
+XPT2046_Touchscreen ts(T_CS, T_IRQ);
+
+const int TOUCH_X_MIN = 200;
+const int TOUCH_X_MAX = 3900;
+const int TOUCH_Y_MIN = 200;
+const int TOUCH_Y_MAX = 3900;
 Preferences prefs;
 WebServer server(80);
 DNSServer dns;
@@ -113,26 +127,36 @@ void fetchWeather(){
 }
 
 void card(int x,int y,int w,int h,uint16_t c=C_PANEL){lcd.fillRoundRect(x,y,w,h,10,c);lcd.drawRoundRect(x,y,w,h,10,0x2945);}
-void titleBar(const String&t){lcd.fillRect(0,0,320,32,C_BG);lcd.setTextDatum(textdatum_t::middle_left);lcd.setFont(&fonts::Font2);lcd.setTextColor(C_TEXT);lcd.drawString(t,12,16);lcd.setTextDatum(textdatum_t::middle_right);lcd.setTextColor(WiFi.status()==WL_CONNECTED?C_CYAN:C_MUTED);lcd.drawString(WiFi.status()==WL_CONNECTED?"WiFi":(setupMode?"SETUP":"offline"),308,16);}
-void nav(){lcd.fillRect(0,202,320,38,0x0841);const char*l[]={"Home","Weather","Timer","Setup"};int xs[]={40,120,200,280};for(int i=0;i<4;i++){bool a=((int)currentScreen==i);lcd.setTextDatum(textdatum_t::middle_center);lcd.setFont(&fonts::Font0);lcd.setTextColor(a?C_CYAN:C_MUTED);if(a)lcd.fillRoundRect(xs[i]-26,206,52,28,8,C_PANEL2);lcd.drawString(l[i],xs[i],220);}}
+void titleBar(const String&t){lcd.fillRect(0,0,320,32,C_BG);lcd.setTextDatum(ML_DATUM);lcd.setTextFont(2);lcd.setTextColor(C_TEXT);lcd.drawString(t,12,16);lcd.setTextDatum(MR_DATUM);lcd.setTextColor(WiFi.status()==WL_CONNECTED?C_CYAN:C_MUTED);lcd.drawString(WiFi.status()==WL_CONNECTED?"WiFi":(setupMode?"SETUP":"offline"),308,16);}
+void nav(){lcd.fillRect(0,202,320,38,0x0841);const char*l[]={"Home","Weather","Timer","Setup"};int xs[]={40,120,200,280};for(int i=0;i<4;i++){bool a=((int)currentScreen==i);lcd.setTextDatum(MC_DATUM);lcd.setTextFont(1);lcd.setTextColor(a?C_CYAN:C_MUTED);if(a)lcd.fillRoundRect(xs[i]-26,206,52,28,8,C_PANEL2);lcd.drawString(l[i],xs[i],220);}}
 
 void drawHome(){
-  lcd.fillScreen(C_BG);titleBar("Universal Desk Dashboard");struct tm t;char tb[6]="--:--",db[32]="Waiting for time...";if(getLocalTime(&t,50)){strftime(tb,sizeof(tb),"%H:%M",&t);strftime(db,sizeof(db),"%a, %d %b %Y",&t);}card(10,40,145,86);lcd.setTextDatum(textdatum_t::top_left);lcd.setFont(&fonts::Font7);lcd.setTextColor(C_TEXT);lcd.drawString(tb,20,49);lcd.setFont(&fonts::Font0);lcd.setTextColor(C_MUTED);lcd.drawString(db,20,106);
-  card(165,40,145,86);lcd.setFont(&fonts::Font4);lcd.setTextColor(C_TEXT);lcd.drawString(weather.valid?String(weather.temp,0)+" C":"-- C",176,51);lcd.setFont(&fonts::Font0);lcd.setTextColor(C_MUTED);lcd.drawString(weather.valid?weatherText(weather.code):"Weather loading...",176,84);lcd.drawString(cfgCity,176,104);
-  card(10,136,145,56);lcd.setTextColor(C_MUTED);lcd.setFont(&fonts::Font0);lcd.drawString("FOCUS TIMER",20,146);lcd.setTextColor(timerRunning?C_GREEN:C_TEXT);lcd.setFont(&fonts::Font4);uint32_t r=timerDurationSec;if(timerRunning){long ms=(long)(timerEndsAt-millis());r=ms>0?ms/1000:0;}char b[10];snprintf(b,sizeof(b),"%02lu:%02lu",(unsigned long)(r/60),(unsigned long)(r%60));lcd.drawString(b,20,161);
-  card(165,136,145,56);lcd.setTextColor(C_MUTED);lcd.setFont(&fonts::Font0);lcd.drawString("STATUS",176,146);lcd.setTextColor(setupMode?C_YELLOW:C_CYAN);lcd.setFont(&fonts::Font2);lcd.drawString(setupMode?"Setup required":"Online",176,166);nav();
+  lcd.fillScreen(C_BG);titleBar("Universal Desk Dashboard");struct tm t;char tb[6]="--:--",db[32]="Waiting for time...";if(getLocalTime(&t,50)){strftime(tb,sizeof(tb),"%H:%M",&t);strftime(db,sizeof(db),"%a, %d %b %Y",&t);}card(10,40,145,86);lcd.setTextDatum(TL_DATUM);lcd.setTextFont(7);lcd.setTextColor(C_TEXT);lcd.drawString(tb,20,49);lcd.setTextFont(1);lcd.setTextColor(C_MUTED);lcd.drawString(db,20,106);
+  card(165,40,145,86);lcd.setTextFont(4);lcd.setTextColor(C_TEXT);lcd.drawString(weather.valid?String(weather.temp,0)+" C":"-- C",176,51);lcd.setTextFont(1);lcd.setTextColor(C_MUTED);lcd.drawString(weather.valid?weatherText(weather.code):"Weather loading...",176,84);lcd.drawString(cfgCity,176,104);
+  card(10,136,145,56);lcd.setTextColor(C_MUTED);lcd.setTextFont(1);lcd.drawString("FOCUS TIMER",20,146);lcd.setTextColor(timerRunning?C_GREEN:C_TEXT);lcd.setTextFont(4);uint32_t r=timerDurationSec;if(timerRunning){long ms=(long)(timerEndsAt-millis());r=ms>0?ms/1000:0;}char b[10];snprintf(b,sizeof(b),"%02lu:%02lu",(unsigned long)(r/60),(unsigned long)(r%60));lcd.drawString(b,20,161);
+  card(165,136,145,56);lcd.setTextColor(C_MUTED);lcd.setTextFont(1);lcd.drawString("STATUS",176,146);lcd.setTextColor(setupMode?C_YELLOW:C_CYAN);lcd.setTextFont(2);lcd.drawString(setupMode?"Setup required":"Online",176,166);nav();
 }
 
-void drawWeather(){lcd.fillScreen(C_BG);titleBar("Weather");card(10,42,300,70);lcd.setTextDatum(textdatum_t::top_left);lcd.setFont(&fonts::Font2);lcd.setTextColor(C_MUTED);lcd.drawString(cfgCity,20,51);lcd.setFont(&fonts::Font7);lcd.setTextColor(C_TEXT);lcd.drawString(weather.valid?String(weather.temp,1)+" C":"--.- C",20,67);card(10,122,145,70);lcd.setFont(&fonts::Font0);lcd.setTextColor(C_MUTED);lcd.drawString("Feels like",20,132);lcd.setFont(&fonts::Font2);lcd.setTextColor(C_TEXT);lcd.drawString(weather.valid?String(weather.feels,1)+" C":"--",20,151);lcd.setFont(&fonts::Font0);lcd.setTextColor(C_MUTED);lcd.drawString("Humidity "+String(weather.humidity)+"%",20,174);card(165,122,145,70);lcd.setTextColor(C_MUTED);lcd.drawString("Today",175,132);lcd.setFont(&fonts::Font2);lcd.setTextColor(C_TEXT);lcd.drawString(weather.valid?String(weather.tmax,0)+" / "+String(weather.tmin,0)+" C":"-- / --",175,151);lcd.setFont(&fonts::Font0);lcd.setTextColor(C_MUTED);lcd.drawString("Wind "+String(weather.wind,0)+" km/h",175,174);nav();}
+void drawWeather(){lcd.fillScreen(C_BG);titleBar("Weather");card(10,42,300,70);lcd.setTextDatum(TL_DATUM);lcd.setTextFont(2);lcd.setTextColor(C_MUTED);lcd.drawString(cfgCity,20,51);lcd.setTextFont(7);lcd.setTextColor(C_TEXT);lcd.drawString(weather.valid?String(weather.temp,1)+" C":"--.- C",20,67);card(10,122,145,70);lcd.setTextFont(1);lcd.setTextColor(C_MUTED);lcd.drawString("Feels like",20,132);lcd.setTextFont(2);lcd.setTextColor(C_TEXT);lcd.drawString(weather.valid?String(weather.feels,1)+" C":"--",20,151);lcd.setTextFont(1);lcd.setTextColor(C_MUTED);lcd.drawString("Humidity "+String(weather.humidity)+"%",20,174);card(165,122,145,70);lcd.setTextColor(C_MUTED);lcd.drawString("Today",175,132);lcd.setTextFont(2);lcd.setTextColor(C_TEXT);lcd.drawString(weather.valid?String(weather.tmax,0)+" / "+String(weather.tmin,0)+" C":"-- / --",175,151);lcd.setTextFont(1);lcd.setTextColor(C_MUTED);lcd.drawString("Wind "+String(weather.wind,0)+" km/h",175,174);nav();}
 
-void drawTimer(){lcd.fillScreen(C_BG);titleBar("Focus Timer");uint32_t r=timerDurationSec;if(timerRunning){long ms=(long)(timerEndsAt-millis());if(ms<=0){timerRunning=false;r=0;}else r=ms/1000;}char b[10];snprintf(b,sizeof(b),"%02lu:%02lu",(unsigned long)(r/60),(unsigned long)(r%60));lcd.setTextDatum(textdatum_t::middle_center);lcd.setFont(&fonts::Font7);lcd.setTextColor(C_TEXT);lcd.drawString(b,160,86);card(35,124,250,44,C_PANEL2);lcd.setFont(&fonts::Font2);lcd.setTextColor(timerRunning?C_YELLOW:C_CYAN);lcd.drawString(timerRunning?"PAUSE / STOP":"START",160,146);const char*p[]={"25m","5m","15m"};int xx[]={65,160,255};for(int i=0;i<3;i++){card(xx[i]-35,174,70,24);lcd.setFont(&fonts::Font0);lcd.setTextColor(C_TEXT);lcd.drawString(p[i],xx[i],186);}nav();}
+void drawTimer(){lcd.fillScreen(C_BG);titleBar("Focus Timer");uint32_t r=timerDurationSec;if(timerRunning){long ms=(long)(timerEndsAt-millis());if(ms<=0){timerRunning=false;r=0;}else r=ms/1000;}char b[10];snprintf(b,sizeof(b),"%02lu:%02lu",(unsigned long)(r/60),(unsigned long)(r%60));lcd.setTextDatum(MC_DATUM);lcd.setTextFont(7);lcd.setTextColor(C_TEXT);lcd.drawString(b,160,86);card(35,124,250,44,C_PANEL2);lcd.setTextFont(2);lcd.setTextColor(timerRunning?C_YELLOW:C_CYAN);lcd.drawString(timerRunning?"PAUSE / STOP":"START",160,146);const char*p[]={"25m","5m","15m"};int xx[]={65,160,255};for(int i=0;i<3;i++){card(xx[i]-35,174,70,24);lcd.setTextFont(1);lcd.setTextColor(C_TEXT);lcd.drawString(p[i],xx[i],186);}nav();}
 
-void drawSettings(){lcd.fillScreen(C_BG);titleBar("Setup");card(10,42,300,58);lcd.setTextDatum(textdatum_t::top_left);lcd.setFont(&fonts::Font0);lcd.setTextColor(C_MUTED);lcd.drawString(setupMode?"Connect phone to:":"Open in browser:",20,52);lcd.setFont(&fonts::Font2);lcd.setTextColor(C_TEXT);lcd.drawString(setupMode?String(AP_NAME):WiFi.localIP().toString(),20,70);card(10,110,300,80);lcd.setFont(&fonts::Font0);lcd.setTextColor(C_MUTED);lcd.drawString("City",20,121);lcd.setTextColor(C_TEXT);lcd.drawString(cfgCity,115,121);lcd.setTextColor(C_MUTED);lcd.drawString("Coordinates",20,143);lcd.setTextColor(C_TEXT);lcd.drawString(String(cfgLat,3)+", "+String(cfgLon,3),115,143);lcd.setTextColor(C_MUTED);lcd.drawString("Custom link",20,165);lcd.setTextColor(C_CYAN);lcd.drawString(cfgCustomLink.substring(0,28),115,165);nav();}
+void drawSettings(){lcd.fillScreen(C_BG);titleBar("Setup");card(10,42,300,58);lcd.setTextDatum(TL_DATUM);lcd.setTextFont(1);lcd.setTextColor(C_MUTED);lcd.drawString(setupMode?"Connect phone to:":"Open in browser:",20,52);lcd.setTextFont(2);lcd.setTextColor(C_TEXT);lcd.drawString(setupMode?String(AP_NAME):WiFi.localIP().toString(),20,70);card(10,110,300,80);lcd.setTextFont(1);lcd.setTextColor(C_MUTED);lcd.drawString("City",20,121);lcd.setTextColor(C_TEXT);lcd.drawString(cfgCity,115,121);lcd.setTextColor(C_MUTED);lcd.drawString("Coordinates",20,143);lcd.setTextColor(C_TEXT);lcd.drawString(String(cfgLat,3)+", "+String(cfgLon,3),115,143);lcd.setTextColor(C_MUTED);lcd.drawString("Custom link",20,165);lcd.setTextColor(C_CYAN);lcd.drawString(cfgCustomLink.substring(0,28),115,165);nav();}
 
 void redraw(){if(currentScreen==HOME)drawHome();else if(currentScreen==WEATHER)drawWeather();else if(currentScreen==TIMER)drawTimer();else drawSettings();lastDraw=millis();}
 void setTimerMinutes(int m){timerDurationSec=m*60;timerRunning=false;drawTimer();}
 
-void handleTouch(){uint16_t x,y;if(!lcd.getTouch(&x,&y))return;if(millis()-lastTouch<250)return;lastTouch=millis();if(y>=200){if(x<80)currentScreen=HOME;else if(x<160)currentScreen=WEATHER;else if(x<240)currentScreen=TIMER;else currentScreen=SETTINGS;redraw();return;}if(currentScreen==TIMER){if(y>=120&&y<=170){if(timerRunning){long ms=(long)(timerEndsAt-millis());timerDurationSec=ms>0?ms/1000:0;timerRunning=false;}else{timerEndsAt=millis()+(unsigned long)timerDurationSec*1000UL;timerRunning=true;}redraw();}else if(y>=170&&y<202){if(x<110)setTimerMinutes(25);else if(x<210)setTimerMinutes(5);else setTimerMinutes(15);}}}
+bool readTouch(uint16_t &x, uint16_t &y){
+  if(!ts.touched()) return false;
+  TS_Point p = ts.getPoint();
+  int tx = map(p.x, TOUCH_X_MIN, TOUCH_X_MAX, 0, 320);
+  int ty = map(p.y, TOUCH_Y_MIN, TOUCH_Y_MAX, 0, 240);
+  x = constrain(tx, 0, 319);
+  y = constrain(ty, 0, 239);
+  return true;
+}
 
-void setup(){Serial.begin(115200);loadPrefs();lcd.init();lcd.setRotation(5);lcd.setColorDepth(16);lcd.setBrightness(180);lcd.fillScreen(C_BG);lcd.setTextDatum(textdatum_t::middle_center);lcd.setTextColor(C_TEXT);lcd.setFont(&fonts::Font2);lcd.drawString("Universal Desk Dashboard",160,102);lcd.setFont(&fonts::Font0);lcd.setTextColor(C_MUTED);lcd.drawString("Starting...",160,130);connectWiFi();if(!setupMode&&WiFi.status()==WL_CONNECTED){configTzTime(cfgTZ.c_str(),"pool.ntp.org","time.nist.gov");fetchWeather();}redraw();}
+void handleTouch(){uint16_t x,y;if(!readTouch(x,y))return;if(millis()-lastTouch<250)return;lastTouch=millis();if(y>=200){if(x<80)currentScreen=HOME;else if(x<160)currentScreen=WEATHER;else if(x<240)currentScreen=TIMER;else currentScreen=SETTINGS;redraw();return;}if(currentScreen==TIMER){if(y>=120&&y<=170){if(timerRunning){long ms=(long)(timerEndsAt-millis());timerDurationSec=ms>0?ms/1000:0;timerRunning=false;}else{timerEndsAt=millis()+(unsigned long)timerDurationSec*1000UL;timerRunning=true;}redraw();}else if(y>=170&&y<202){if(x<110)setTimerMinutes(25);else if(x<210)setTimerMinutes(5);else setTimerMinutes(15);}}}
+
+void setup(){Serial.begin(115200);loadPrefs();lcd.init();lcd.setRotation(1);delay(50);lcd.invertDisplay(true);delay(50);pinMode(TFT_BL,OUTPUT);analogWrite(TFT_BL,180);SPI.begin(T_CLK,T_DOUT,T_DIN);ts.begin();ts.setRotation(1);lcd.fillScreen(C_BG);lcd.setTextDatum(MC_DATUM);lcd.setTextColor(C_TEXT);lcd.setTextFont(2);lcd.drawString("Universal Desk Dashboard",160,102);lcd.setTextFont(1);lcd.setTextColor(C_MUTED);lcd.drawString("Starting...",160,130);connectWiFi();if(!setupMode&&WiFi.status()==WL_CONNECTED){configTzTime(cfgTZ.c_str(),"pool.ntp.org","time.nist.gov");fetchWeather();}redraw();}
 void loop(){if(setupMode)dns.processNextRequest();server.handleClient();handleTouch();if(!setupMode&&WiFi.status()==WL_CONNECTED){if(!weather.valid||millis()-weather.updatedAt>WEATHER_INTERVAL)fetchWeather();}struct tm t;if(currentScreen==HOME&&getLocalTime(&t,5)&&t.tm_min!=lastMinuteDrawn){lastMinuteDrawn=t.tm_min;drawHome();}if(currentScreen==TIMER&&timerRunning&&millis()-lastDraw>1000)drawTimer();delay(10);}
