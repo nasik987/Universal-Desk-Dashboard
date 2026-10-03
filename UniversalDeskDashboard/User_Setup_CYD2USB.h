@@ -6,7 +6,7 @@
 #define ST7789_DRIVER
 
 #define TFT_RGB_ORDER TFT_BGR
-#define TFT_INVERSION_OFF
+#define TFT_INVERSION_ON
 
 #define TFT_WIDTH  240
 #define TFT_HEIGHT 320
