@@ -28,7 +28,7 @@ jobs:
           arduino-cli config init
           arduino-cli config add board_manager.additional_urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
           arduino-cli core update-index
-          arduino-cli core install esp32:esp32
+          arduino-cli core install esp32:esp32@3.1.3
 
       - name: Install libraries
         run: |
@@ -39,7 +39,7 @@ jobs:
         run: |
           mkdir -p build
           arduino-cli compile \
-            --fqbn esp32:esp32:esp32 \
+            --fqbn esp32:esp32:jczn_2432s028r \
             --output-dir build \
             UniversalDeskDashboard
 
@@ -52,13 +52,37 @@ jobs:
           echo "Using boot_app0: $BOOT_APP0"
           test -n "$BOOT_APP0"
           mkdir -p docs/firmware
+          SHORT_SHA="${GITHUB_SHA::8}"
+          FW_FILE="UniversalDeskDashboard-${SHORT_SHA}.merged.bin"
           python -m esptool --chip esp32 merge-bin \
-            -o docs/firmware/UniversalDeskDashboard.merged.bin \
+            -o "docs/firmware/${FW_FILE}" \
             --flash-mode dio --flash-freq 40m --flash-size 4MB \
             0x1000 build/UniversalDeskDashboard.ino.bootloader.bin \
             0x8000 build/UniversalDeskDashboard.ino.partitions.bin \
             0xe000 "$BOOT_APP0" \
             0x10000 build/UniversalDeskDashboard.ino.bin
+
+          python - <<'PY'
+          import json, os
+          sha = os.environ["GITHUB_SHA"][:8]
+          run = os.environ["GITHUB_RUN_NUMBER"]
+          manifest = {
+              "name": "Universal Desk Dashboard",
+              "version": f"0.2.{run}-{sha}",
+              "home_assistant_domain": "universal_desk_dashboard",
+              "new_install_prompt_erase": True,
+              "builds": [{
+                  "chipFamily": "ESP32",
+                  "parts": [{
+                      "path": f"firmware/UniversalDeskDashboard-{sha}.merged.bin",
+                      "offset": 0
+                  }]
+              }]
+          }
+          with open("docs/manifest.json", "w", encoding="utf-8") as f:
+              json.dump(manifest, f, indent=2)
+          PY
+          cat docs/manifest.json
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
