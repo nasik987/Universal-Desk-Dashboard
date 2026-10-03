@@ -40,7 +40,7 @@ public:
       cfg.dummy_read_pixel = 16;
       cfg.dummy_read_bits = 1;
       cfg.readable = true;
-      cfg.invert = false;
+      cfg.invert = true;
       cfg.rgb_order = true;
       cfg.dlen_16bit = false;
       cfg.bus_shared = false;
