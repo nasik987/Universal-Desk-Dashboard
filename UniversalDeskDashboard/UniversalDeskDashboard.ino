@@ -545,8 +545,6 @@ void connectSelectedWifi(){
   }
 }
 
-void drawSettings(){lcd.fillScreen(C_BG);titleBar("Setup");card(10,42,300,58);lcd.setTextDatum(TL_DATUM);lcd.setTextFont(1);lcd.setTextColor(C_MUTED);lcd.drawString(setupMode?"Connect phone to:":"Open in browser:",20,52);lcd.setTextFont(2);lcd.setTextColor(C_TEXT);lcd.drawString(setupMode?String(AP_NAME):WiFi.localIP().toString(),20,70);card(10,110,300,80);lcd.setTextFont(1);lcd.setTextColor(C_MUTED);lcd.drawString("City",20,121);lcd.setTextColor(C_TEXT);lcd.drawString(cfgCity,115,121);lcd.setTextColor(C_MUTED);lcd.drawString("Coordinates",20,143);lcd.setTextColor(C_TEXT);lcd.drawString(String(cfgLat,3)+", "+String(cfgLon,3),115,143);lcd.setTextColor(C_MUTED);lcd.drawString("Custom link",20,165);lcd.setTextColor(C_CYAN);lcd.drawString(cfgCustomLink.substring(0,28),115,165);nav();}
-
 void redraw(){if(currentScreen==HOME)drawHome();else if(currentScreen==WEATHER)drawWeather();else if(currentScreen==TIMER)drawTimer();else if(currentScreen==SETTINGS)drawSettings();else if(currentScreen==WIFI_LIST)drawWifiList();else drawWifiKeyboard();lastDraw=millis();}
 void setTimerMinutes(int m){timerDurationSec=m*60;timerRunning=false;drawTimer();}
 
