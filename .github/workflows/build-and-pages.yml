@@ -10,7 +10,7 @@ on:
       - '.github/workflows/build-and-pages.yml'
 
 permissions:
-  contents: write
+  contents: read
   pages: write
   id-token: write
 
@@ -38,14 +38,27 @@ jobs:
       - name: Compile
         run: |
           mkdir -p build
-          arduino-cli compile             --fqbn esp32:esp32:esp32             --output-dir build             UniversalDeskDashboard
+          arduino-cli compile \
+            --fqbn esp32:esp32:esp32 \
+            --output-dir build \
+            UniversalDeskDashboard
 
       - name: Install esptool
         run: pip install esptool
 
       - name: Create merged binary
         run: |
-          python -m esptool --chip esp32 merge_bin -o docs/firmware/UniversalDeskDashboard.merged.bin             --flash_mode dio --flash_freq 40m --flash_size 4MB             0x1000 build/UniversalDeskDashboard.ino.bootloader.bin             0x8000 build/UniversalDeskDashboard.ino.partitions.bin             0xe000 build/boot_app0.bin             0x10000 build/UniversalDeskDashboard.ino.bin
+          BOOT_APP0="$(find "$HOME/.arduino15/packages/esp32" -name boot_app0.bin -print -quit)"
+          echo "Using boot_app0: $BOOT_APP0"
+          test -n "$BOOT_APP0"
+          mkdir -p docs/firmware
+          python -m esptool --chip esp32 merge-bin \
+            -o docs/firmware/UniversalDeskDashboard.merged.bin \
+            --flash-mode dio --flash-freq 40m --flash-size 4MB \
+            0x1000 build/UniversalDeskDashboard.ino.bootloader.bin \
+            0x8000 build/UniversalDeskDashboard.ino.partitions.bin \
+            0xe000 "$BOOT_APP0" \
+            0x10000 build/UniversalDeskDashboard.ino.bin
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
