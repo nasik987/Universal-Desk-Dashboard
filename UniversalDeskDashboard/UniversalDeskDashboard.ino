@@ -24,11 +24,21 @@ const int TOUCH_X_MIN = 200;
 const int TOUCH_X_MAX = 3900;
 const int TOUCH_Y_MIN = 200;
 const int TOUCH_Y_MAX = 3900;
+
+const int MAX_NETWORKS = 20;
+String wifiSSIDs[MAX_NETWORKS];
+int wifiCount = 0;
+int wifiOffset = 0;
+String selectedSSID;
+String passwordBuffer;
+bool keyboardNumbers = false;
+bool keyboardShift = false;
+bool showPassword = false;
 Preferences prefs;
 WebServer server(80);
 DNSServer dns;
 
-enum Screen { HOME, WEATHER, TIMER, SETTINGS };
+enum Screen { HOME, WEATHER, TIMER, SETTINGS, WIFI_LIST, WIFI_KEYBOARD };
 Screen currentScreen = HOME;
 
 String cfgSsid, cfgPass;
@@ -141,22 +151,272 @@ void drawWeather(){lcd.fillScreen(C_BG);titleBar("Weather");card(10,42,300,70);l
 
 void drawTimer(){lcd.fillScreen(C_BG);titleBar("Focus Timer");uint32_t r=timerDurationSec;if(timerRunning){long ms=(long)(timerEndsAt-millis());if(ms<=0){timerRunning=false;r=0;}else r=ms/1000;}char b[10];snprintf(b,sizeof(b),"%02lu:%02lu",(unsigned long)(r/60),(unsigned long)(r%60));lcd.setTextDatum(MC_DATUM);lcd.setTextFont(7);lcd.setTextColor(C_TEXT);lcd.drawString(b,160,86);card(35,124,250,44,C_PANEL2);lcd.setTextFont(2);lcd.setTextColor(timerRunning?C_YELLOW:C_CYAN);lcd.drawString(timerRunning?"PAUSE / STOP":"START",160,146);const char*p[]={"25m","5m","15m"};int xx[]={65,160,255};for(int i=0;i<3;i++){card(xx[i]-35,174,70,24);lcd.setTextFont(1);lcd.setTextColor(C_TEXT);lcd.drawString(p[i],xx[i],186);}nav();}
 
+
+void scanWifiNetworks(){
+  lcd.fillScreen(C_BG);
+  lcd.setTextDatum(MC_DATUM);
+  lcd.setTextFont(2);
+  lcd.setTextColor(C_TEXT);
+  lcd.drawString("Scanning Wi-Fi...",160,110);
+
+  WiFi.mode(WIFI_STA);
+  if(WiFi.status()!=WL_CONNECTED) WiFi.disconnect(false);
+  delay(120);
+
+  int n=WiFi.scanNetworks(false,true);
+  wifiCount=(n>0)?min(n,MAX_NETWORKS):0;
+  for(int i=0;i<wifiCount;i++) wifiSSIDs[i]=WiFi.SSID(i);
+  WiFi.scanDelete();
+  wifiOffset=0;
+}
+
+void drawWifiList(){
+  lcd.fillScreen(C_BG);
+  lcd.setTextDatum(MC_DATUM);
+  lcd.setTextFont(2);
+  lcd.setTextColor(C_TEXT);
+  lcd.drawString("WI-FI SELECTION",160,16);
+
+  lcd.setTextDatum(ML_DATUM);
+  lcd.setTextFont(2);
+  if(wifiCount==0){
+    lcd.setTextColor(C_YELLOW);
+    lcd.drawString("No networks found",14,55);
+  }else{
+    int shown=0;
+    for(int i=wifiOffset;i<wifiCount && shown<5;i++,shown++){
+      int y=39+shown*31;
+      String s=wifiSSIDs[i];
+      if(s.length()>23) s=s.substring(0,20)+"...";
+      lcd.setTextColor(C_TEXT);
+      lcd.drawString(s,14,y);
+      lcd.drawFastHLine(10,y+23,300,0x2945);
+    }
+  }
+
+  lcd.setTextDatum(MC_DATUM);
+  lcd.setTextFont(1);
+  lcd.drawRoundRect(8,204,72,29,7,C_MUTED);
+  lcd.setTextColor(C_MUTED); lcd.drawString("BACK",44,219);
+  lcd.drawRoundRect(88,204,88,29,7,C_CYAN);
+  lcd.setTextColor(C_CYAN); lcd.drawString("REFRESH",132,219);
+
+  if(wifiOffset>0){
+    lcd.drawRoundRect(190,204,54,29,7,C_CYAN);
+    lcd.drawString("UP",217,219);
+  }
+  if(wifiOffset+5<wifiCount){
+    lcd.drawRoundRect(252,204,60,29,7,C_CYAN);
+    lcd.drawString("DOWN",282,219);
+  }
+}
+
+void drawWifiKeyboard(){
+  lcd.fillScreen(C_BG);
+  lcd.setTextDatum(MC_DATUM);
+  lcd.setTextColor(C_TEXT);
+  lcd.setTextFont(2);
+  lcd.drawString("Wi-Fi Password",160,13);
+  lcd.setTextFont(1);
+  String ss=selectedSSID;
+  if(ss.length()>28) ss=ss.substring(0,25)+"...";
+  lcd.setTextColor(C_CYAN);
+  lcd.drawString(ss,160,31);
+
+  lcd.drawRect(10,42,300,28,C_MUTED);
+  lcd.setTextDatum(ML_DATUM);
+  lcd.setTextColor(C_TEXT);
+  String shown=showPassword?passwordBuffer:String("");
+  if(!showPassword) for(size_t i=0;i<passwordBuffer.length();i++) shown+="*";
+  lcd.drawString(shown,17,53);
+
+  const char* rowsAlpha[]={"qwertyuiop","asdfghjkl","zxcvbnm"};
+  const char* rowsNum[]={"1234567890","!@#$%^&*(/",")-_+=.,?"};
+  lcd.setTextDatum(MC_DATUM);
+  for(int r=0;r<3;r++){
+    const char* row=keyboardNumbers?rowsNum[r]:rowsAlpha[r];
+    int len=strlen(row);
+    for(int i=0;i<len;i++){
+      int bx=i*29+2, by=78+r*30;
+      lcd.drawRect(bx,by,26,26,C_MUTED);
+      char ch=row[i];
+      if(keyboardShift && !keyboardNumbers) ch=toupper(ch);
+      lcd.setTextColor(C_TEXT);
+      lcd.drawString(String(ch),bx+13,by+13);
+    }
+  }
+
+  lcd.drawRect(2,168,316,25,C_MUTED);
+  lcd.drawString("Space",160,181);
+
+  int bw=64, by=198, bh=35;
+  lcd.drawRect(2,by,bw-4,bh,C_MUTED); lcd.drawString("Shift",32,216);
+  lcd.drawRect(bw+2,by,bw-4,bh,C_MUTED); lcd.drawString("123",96,216);
+  lcd.drawRect(2*bw+2,by,bw-4,bh,C_MUTED); lcd.drawString("Del",160,216);
+  lcd.drawRect(3*bw+2,by,bw-4,bh,C_YELLOW); lcd.setTextColor(C_YELLOW); lcd.drawString("Back",224,216);
+  lcd.drawRect(4*bw+2,by,bw-4,bh,C_GREEN); lcd.setTextColor(C_GREEN); lcd.drawString("OK",288,216);
+
+  lcd.setTextColor(C_CYAN);
+  lcd.drawRect(250,44,56,22,C_CYAN);
+  lcd.drawString(showPassword?"Hide":"Show",278,55);
+}
+
+void showWifiResult(bool ok){
+  lcd.fillScreen(C_BG);
+  lcd.setTextDatum(MC_DATUM);
+  lcd.setTextFont(2);
+  lcd.setTextColor(ok?C_GREEN:C_YELLOW);
+  lcd.drawString(ok?"Wi-Fi connected":"Connection failed",160,108);
+  delay(ok?900:1500);
+}
+
+void connectSelectedWifi(){
+  lcd.fillScreen(C_BG);
+  lcd.setTextDatum(MC_DATUM);
+  lcd.setTextFont(2);
+  lcd.setTextColor(C_TEXT);
+  lcd.drawString("Connecting to",160,88);
+  lcd.setTextColor(C_CYAN);
+  lcd.drawString(selectedSSID,160,113);
+  lcd.setTextFont(1);
+  lcd.setTextColor(C_MUTED);
+  lcd.drawString("Please wait...",160,141);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  delay(100);
+  WiFi.begin(selectedSSID.c_str(),passwordBuffer.c_str());
+
+  unsigned long started=millis();
+  while(WiFi.status()!=WL_CONNECTED && millis()-started<15000) delay(250);
+
+  if(WiFi.status()==WL_CONNECTED){
+    cfgSsid=selectedSSID;
+    cfgPass=passwordBuffer;
+    savePrefs();
+    setupMode=false;
+    configTzTime(cfgTZ.c_str(),"pool.ntp.org","time.nist.gov");
+    fetchWeather();
+    showWifiResult(true);
+    currentScreen=HOME;
+    redraw();
+  }else{
+    showWifiResult(false);
+    scanWifiNetworks();
+    currentScreen=WIFI_LIST;
+    drawWifiList();
+  }
+}
+
 void drawSettings(){lcd.fillScreen(C_BG);titleBar("Setup");card(10,42,300,58);lcd.setTextDatum(TL_DATUM);lcd.setTextFont(1);lcd.setTextColor(C_MUTED);lcd.drawString(setupMode?"Connect phone to:":"Open in browser:",20,52);lcd.setTextFont(2);lcd.setTextColor(C_TEXT);lcd.drawString(setupMode?String(AP_NAME):WiFi.localIP().toString(),20,70);card(10,110,300,80);lcd.setTextFont(1);lcd.setTextColor(C_MUTED);lcd.drawString("City",20,121);lcd.setTextColor(C_TEXT);lcd.drawString(cfgCity,115,121);lcd.setTextColor(C_MUTED);lcd.drawString("Coordinates",20,143);lcd.setTextColor(C_TEXT);lcd.drawString(String(cfgLat,3)+", "+String(cfgLon,3),115,143);lcd.setTextColor(C_MUTED);lcd.drawString("Custom link",20,165);lcd.setTextColor(C_CYAN);lcd.drawString(cfgCustomLink.substring(0,28),115,165);nav();}
 
-void redraw(){if(currentScreen==HOME)drawHome();else if(currentScreen==WEATHER)drawWeather();else if(currentScreen==TIMER)drawTimer();else drawSettings();lastDraw=millis();}
+void redraw(){if(currentScreen==HOME)drawHome();else if(currentScreen==WEATHER)drawWeather();else if(currentScreen==TIMER)drawTimer();else if(currentScreen==SETTINGS)drawSettings();else if(currentScreen==WIFI_LIST)drawWifiList();else drawWifiKeyboard();lastDraw=millis();}
 void setTimerMinutes(int m){timerDurationSec=m*60;timerRunning=false;drawTimer();}
 
 bool readTouch(uint16_t &x, uint16_t &y){
   if(!ts.touched()) return false;
   TS_Point p = ts.getPoint();
-  int tx = map(p.x, TOUCH_X_MAX, TOUCH_X_MIN, 0, 320);
+  int tx = map(p.x, TOUCH_X_MIN, TOUCH_X_MAX, 0, 320);
   int ty = map(p.y, TOUCH_Y_MIN, TOUCH_Y_MAX, 0, 240);
   x = constrain(tx, 0, 319);
   y = constrain(ty, 0, 239);
   return true;
 }
 
-void handleTouch(){uint16_t x,y;if(!readTouch(x,y))return;if(millis()-lastTouch<250)return;lastTouch=millis();if(y>=200){if(x<80)currentScreen=HOME;else if(x<160)currentScreen=WEATHER;else if(x<240)currentScreen=TIMER;else currentScreen=SETTINGS;redraw();return;}if(currentScreen==TIMER){if(y>=120&&y<=170){if(timerRunning){long ms=(long)(timerEndsAt-millis());timerDurationSec=ms>0?ms/1000:0;timerRunning=false;}else{timerEndsAt=millis()+(unsigned long)timerDurationSec*1000UL;timerRunning=true;}redraw();}else if(y>=170&&y<202){if(x<110)setTimerMinutes(25);else if(x<210)setTimerMinutes(5);else setTimerMinutes(15);}}}
+void handleTouch(){
+  uint16_t x,y;
+  if(!readTouch(x,y)) return;
+  if(millis()-lastTouch<220) return;
+  lastTouch=millis();
 
-void setup(){Serial.begin(115200);loadPrefs();lcd.init();lcd.setRotation(1);delay(50);lcd.invertDisplay(true);delay(50);pinMode(TFT_BL,OUTPUT);analogWrite(TFT_BL,180);SPI.begin(T_CLK,T_DOUT,T_DIN);ts.begin();ts.setRotation(1);lcd.fillScreen(C_BG);lcd.setTextDatum(MC_DATUM);lcd.setTextColor(C_TEXT);lcd.setTextFont(2);lcd.drawString("Universal Desk Dashboard",160,102);lcd.setTextFont(1);lcd.setTextColor(C_MUTED);lcd.drawString("Starting...",160,130);connectWiFi();if(!setupMode&&WiFi.status()==WL_CONNECTED){configTzTime(cfgTZ.c_str(),"pool.ntp.org","time.nist.gov");fetchWeather();}redraw();}
+  if(currentScreen==WIFI_LIST){
+    if(y>=204){
+      if(x<82){ currentScreen=HOME; redraw(); return; }
+      if(x>=88 && x<=180){ scanWifiNetworks(); drawWifiList(); return; }
+      if(x>=188 && x<=248 && wifiOffset>0){ wifiOffset=max(0,wifiOffset-5); drawWifiList(); return; }
+      if(x>=250 && wifiOffset+5<wifiCount){ wifiOffset+=5; drawWifiList(); return; }
+    }
+    for(int row=0;row<5;row++){
+      int yy=36+row*31;
+      if(y>=yy && y<yy+29){
+        int idx=wifiOffset+row;
+        if(idx<wifiCount){
+          selectedSSID=wifiSSIDs[idx];
+          passwordBuffer="";
+          keyboardNumbers=false;
+          keyboardShift=false;
+          showPassword=false;
+          currentScreen=WIFI_KEYBOARD;
+          drawWifiKeyboard();
+        }
+        return;
+      }
+    }
+    return;
+  }
+
+  if(currentScreen==WIFI_KEYBOARD){
+    if(x>=250 && x<=310 && y>=42 && y<=70){
+      showPassword=!showPassword; drawWifiKeyboard(); return;
+    }
+
+    const char* rowsAlpha[]={"qwertyuiop","asdfghjkl","zxcvbnm"};
+    const char* rowsNum[]={"1234567890","!@#$%^&*(/",")-_+=.,?"};
+    for(int r=0;r<3;r++){
+      const char* row=keyboardNumbers?rowsNum[r]:rowsAlpha[r];
+      int len=strlen(row);
+      for(int i=0;i<len;i++){
+        int bx=i*29+2, by=78+r*30;
+        if(x>=bx && x<=bx+26 && y>=by && y<=by+26){
+          char ch=row[i];
+          if(keyboardShift && !keyboardNumbers) ch=toupper(ch);
+          passwordBuffer+=ch;
+          drawWifiKeyboard();
+          return;
+        }
+      }
+    }
+
+    if(y>=168 && y<=193){ passwordBuffer+=" "; drawWifiKeyboard(); return; }
+
+    if(y>=198){
+      if(x<64){ keyboardShift=!keyboardShift; drawWifiKeyboard(); return; }
+      if(x<128){ keyboardNumbers=!keyboardNumbers; drawWifiKeyboard(); return; }
+      if(x<192){ if(passwordBuffer.length()) passwordBuffer.remove(passwordBuffer.length()-1); drawWifiKeyboard(); return; }
+      if(x<256){ currentScreen=WIFI_LIST; drawWifiList(); return; }
+      connectSelectedWifi(); return;
+    }
+    return;
+  }
+
+  if(y>=200){
+    if(x<80){currentScreen=HOME;redraw();}
+    else if(x<160){currentScreen=WEATHER;redraw();}
+    else if(x<240){currentScreen=TIMER;redraw();}
+    else{
+      scanWifiNetworks();
+      currentScreen=WIFI_LIST;
+      drawWifiList();
+    }
+    return;
+  }
+
+  if(currentScreen==TIMER){
+    if(y>=120&&y<=170){
+      if(timerRunning){
+        long ms=(long)(timerEndsAt-millis());
+        timerDurationSec=ms>0?ms/1000:0;
+        timerRunning=false;
+      }else{
+        timerEndsAt=millis()+(unsigned long)timerDurationSec*1000UL;
+        timerRunning=true;
+      }
+      redraw();
+    }else if(y>=170&&y<202){
+      if(x<110)setTimerMinutes(25);else if(x<210)setTimerMinutes(5);else setTimerMinutes(15);
+    }
+  }
+}
+
+void setup(){Serial.begin(115200);loadPrefs();lcd.init();lcd.setRotation(1);delay(50);lcd.invertDisplay(true);delay(50);pinMode(TFT_BL,OUTPUT);analogWrite(TFT_BL,180);SPI.begin(T_CLK,T_DOUT,T_DIN);ts.begin();ts.setRotation(1);lcd.fillScreen(C_BG);lcd.setTextDatum(MC_DATUM);lcd.setTextColor(C_TEXT);lcd.setTextFont(2);lcd.drawString("Universal Desk Dashboard",160,102);lcd.setTextFont(1);lcd.setTextColor(C_MUTED);lcd.drawString("Starting...",160,130);connectWiFi();if(!setupMode&&WiFi.status()==WL_CONNECTED){configTzTime(cfgTZ.c_str(),"pool.ntp.org","time.nist.gov");fetchWeather();redraw();}else{scanWifiNetworks();currentScreen=WIFI_LIST;drawWifiList();}}
 void loop(){if(setupMode)dns.processNextRequest();server.handleClient();handleTouch();if(!setupMode&&WiFi.status()==WL_CONNECTED){if(!weather.valid||millis()-weather.updatedAt>WEATHER_INTERVAL)fetchWeather();}struct tm t;if(currentScreen==HOME&&getLocalTime(&t,5)&&t.tm_min!=lastMinuteDrawn){lastMinuteDrawn=t.tm_min;drawHome();}if(currentScreen==TIMER&&timerRunning&&millis()-lastDraw>1000)drawTimer();delay(10);}
