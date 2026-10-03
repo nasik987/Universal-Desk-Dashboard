@@ -1,0 +1,64 @@
+name: Build firmware and deploy web installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'UniversalDeskDashboard/**'
+      - 'docs/**'
+      - '.github/workflows/build-and-pages.yml'
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
+
+      - name: Install ESP32 core
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32
+
+      - name: Install libraries
+        run: |
+          arduino-cli lib install "LovyanGFX"
+          arduino-cli lib install "ArduinoJson"
+
+      - name: Compile
+        run: |
+          mkdir -p build
+          arduino-cli compile             --fqbn esp32:esp32:esp32             --output-dir build             UniversalDeskDashboard
+
+      - name: Install esptool
+        run: pip install esptool
+
+      - name: Create merged binary
+        run: |
+          python -m esptool --chip esp32 merge_bin -o docs/firmware/UniversalDeskDashboard.merged.bin             --flash_mode dio --flash_freq 40m --flash_size 4MB             0x1000 build/UniversalDeskDashboard.ino.bootloader.bin             0x8000 build/UniversalDeskDashboard.ino.partitions.bin             0xe000 build/boot_app0.bin             0x10000 build/UniversalDeskDashboard.ino.bin
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+  deploy:
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
