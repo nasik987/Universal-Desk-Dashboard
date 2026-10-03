@@ -7,8 +7,7 @@
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 #include <time.h>
-#define LGFX_AUTODETECT
-#include <LovyanGFX.h>
+#include "lgfx_2432s028.hpp"
 
 LGFX lcd;
 Preferences prefs;
