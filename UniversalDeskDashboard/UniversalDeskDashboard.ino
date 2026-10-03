@@ -64,7 +64,13 @@ void savePrefs(){
   prefs.putFloat("lat",cfgLat); prefs.putFloat("lon",cfgLon); prefs.end();
 }
 
-String esc(String s){s.replace("&","&amp;");s.replace("<","&lt;");s.replace(">","&gt;");s.replace(""","&quot;");return s;}
+String esc(String s){
+  s.replace("&","&amp;");
+  s.replace("<","&lt;");
+  s.replace(">","&gt;");
+  s.replace("\"","&quot;");
+  return s;
+}
 
 String setupPage(){
   String ip=setupMode?WiFi.softAPIP().toString():WiFi.localIP().toString();
