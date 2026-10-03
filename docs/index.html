@@ -41,12 +41,16 @@
         <div><span class="n">4</span>After boot, connect to <b>DeskDash-Setup</b> to configure Wi-Fi.</div>
       </div>
 
-      <esp-web-install-button manifest="manifest.json">
+      <esp-web-install-button id="installButton" manifest="manifest.json">
         <button slot="activate">Install Universal Desk Dashboard</button>
         <span slot="unsupported">Use Chrome or Edge on desktop.</span>
       </esp-web-install-button>
 
       <p class="note">Flashing replaces the firmware currently stored on the CYD. You can re-flash the original firmware later.</p>
+      <script>
+        // Always fetch the current manifest instead of reusing a cached copy.
+        document.getElementById("installButton").setAttribute("manifest", "manifest.json?v=" + Date.now());
+      </script>
     </section>
   </main>
 </body>
