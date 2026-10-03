@@ -7,7 +7,8 @@
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 #include <time.h>
-#include "lgfx_2432s028.hpp"
+#define LGFX_AUTODETECT
+#include <LovyanGFX.h>
 
 LGFX lcd;
 Preferences prefs;
@@ -134,5 +135,5 @@ void setTimerMinutes(int m){timerDurationSec=m*60;timerRunning=false;drawTimer()
 
 void handleTouch(){uint16_t x,y;if(!lcd.getTouch(&x,&y))return;if(millis()-lastTouch<250)return;lastTouch=millis();if(y>=200){if(x<80)currentScreen=HOME;else if(x<160)currentScreen=WEATHER;else if(x<240)currentScreen=TIMER;else currentScreen=SETTINGS;redraw();return;}if(currentScreen==TIMER){if(y>=120&&y<=170){if(timerRunning){long ms=(long)(timerEndsAt-millis());timerDurationSec=ms>0?ms/1000:0;timerRunning=false;}else{timerEndsAt=millis()+(unsigned long)timerDurationSec*1000UL;timerRunning=true;}redraw();}else if(y>=170&&y<202){if(x<110)setTimerMinutes(25);else if(x<210)setTimerMinutes(5);else setTimerMinutes(15);}}}
 
-void setup(){Serial.begin(115200);loadPrefs();lcd.init();lcd.setRotation(1);lcd.setBrightness(180);lcd.fillScreen(C_BG);lcd.setTextDatum(textdatum_t::middle_center);lcd.setTextColor(C_TEXT);lcd.setFont(&fonts::Font2);lcd.drawString("Universal Desk Dashboard",160,102);lcd.setFont(&fonts::Font0);lcd.setTextColor(C_MUTED);lcd.drawString("Starting...",160,130);connectWiFi();if(!setupMode&&WiFi.status()==WL_CONNECTED){configTzTime(cfgTZ.c_str(),"pool.ntp.org","time.nist.gov");fetchWeather();}redraw();}
+void setup(){Serial.begin(115200);loadPrefs();lcd.init();lcd.setRotation(1);lcd.setColorDepth(16);lcd.setBrightness(180);lcd.fillScreen(C_BG);lcd.setTextDatum(textdatum_t::middle_center);lcd.setTextColor(C_TEXT);lcd.setFont(&fonts::Font2);lcd.drawString("Universal Desk Dashboard",160,102);lcd.setFont(&fonts::Font0);lcd.setTextColor(C_MUTED);lcd.drawString("Starting...",160,130);connectWiFi();if(!setupMode&&WiFi.status()==WL_CONNECTED){configTzTime(cfgTZ.c_str(),"pool.ntp.org","time.nist.gov");fetchWeather();}redraw();}
 void loop(){if(setupMode)dns.processNextRequest();server.handleClient();handleTouch();if(!setupMode&&WiFi.status()==WL_CONNECTED){if(!weather.valid||millis()-weather.updatedAt>WEATHER_INTERVAL)fetchWeather();}struct tm t;if(currentScreen==HOME&&getLocalTime(&t,5)&&t.tm_min!=lastMinuteDrawn){lastMinuteDrawn=t.tm_min;drawHome();}if(currentScreen==TIMER&&timerRunning&&millis()-lastDraw>1000)drawTimer();delay(10);}
