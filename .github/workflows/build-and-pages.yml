@@ -1,18 +1,23 @@
 name: Build firmware and deploy web installer
 
 on:
+  pull_request:
+    paths:
+      - 'UniversalDeskDashboard/**'
+      - 'tests/**'
+      - 'docs/**'
+      - '.github/workflows/build-and-pages.yml'
   workflow_dispatch:
   push:
     branches: [ main ]
     paths:
       - 'UniversalDeskDashboard/**'
+      - 'tests/**'
       - 'docs/**'
       - '.github/workflows/build-and-pages.yml'
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 jobs:
   build:
@@ -36,6 +41,13 @@ jobs:
           arduino-cli lib install "TFT_eSPI"
           arduino-cli lib install "XPT2046_Touchscreen"
           arduino-cli lib install "ArduinoJson"
+
+      - name: Test data handling
+        run: |
+          g++ -std=c++17 -Wall -Wextra \
+            -I "$HOME/Arduino/libraries/ArduinoJson/src" \
+            -I UniversalDeskDashboard tests/data_test.cpp -o /tmp/dashboard-data-test
+          /tmp/dashboard-data-test
 
       - name: Configure TFT_eSPI for CYD 2USB
         run: |
@@ -74,9 +86,9 @@ jobs:
           run = os.environ["GITHUB_RUN_NUMBER"]
           manifest = {
               "name": "Universal Desk Dashboard",
-              "version": f"0.2.{run}-{sha}",
+              "version": f"0.3.{run}-{sha}",
               "home_assistant_domain": "universal_desk_dashboard",
-              "new_install_prompt_erase": True,
+              "new_install_prompt_erase": False,
               "builds": [{
                   "chipFamily": "ESP32",
                   "parts": [{
@@ -96,7 +108,11 @@ jobs:
           path: docs
 
   deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: build
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

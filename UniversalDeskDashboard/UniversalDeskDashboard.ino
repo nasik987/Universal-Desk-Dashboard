@@ -1,4 +1,4 @@
-/* Universal Desk Dashboard v0.1 - CYD ESP32-2432S028 */
+/* Universal Desk Dashboard v0.3 - CYD ESP32-2432S028 */
 #include <WiFi.h>
 #include <WebServer.h>
 #include <DNSServer.h>
@@ -7,6 +7,10 @@
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 #include <time.h>
+#include "DashboardData.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
 #include <TFT_eSPI.h>
 #include <SPI.h>
 #include <XPT2046_Touchscreen.h>
@@ -38,13 +42,19 @@ Preferences prefs;
 WebServer server(80);
 DNSServer dns;
 
-enum Screen { HOME, WEATHER, TIMER, SETTINGS, WIFI_LIST, WIFI_KEYBOARD };
+enum Screen { HOME, APPS, WEATHER, TIMER, MAKERWORLD, SETTINGS, WIFI_LIST, WIFI_KEYBOARD, WEB_INFO };
+enum Icon { SUN, FOCUS_ICON, STATS_ICON, GEAR, DOWNLOAD_ICON, HEART_ICON, PEOPLE_ICON, PRINT_ICON, WIFI_ICON, WEB_ICON };
 Screen currentScreen = HOME;
 
 String cfgSsid, cfgPass;
 String cfgCity = "Brno";
 String cfgTZ = "CET-1CEST,M3.5.0,M10.5.0/3";
 String cfgCustomLink = "https://example.com";
+String cfgMakerURL = "https://raw.githubusercontent.com/nasik987/nasik-makerworld-monitor/main/data/history.json";
+uint8_t cfgBrightness=180;
+bool weatherDaily=false;
+QueueHandle_t weatherQueue, makerQueue;
+TaskHandle_t networkTaskHandle=nullptr;
 float cfgLat = 49.1951;
 float cfgLon = 16.6068;
 
@@ -52,24 +62,23 @@ bool setupMode = false;
 const char* AP_NAME = "DeskDash-Setup";
 IPAddress apIP(192,168,4,1);
 
-struct WeatherData {
-  bool valid = false;
-  float temp = 0, feels = 0, wind = 0, tmax = 0, tmin = 0;
-  int humidity = 0, code = -1;
-  unsigned long updatedAt = 0;
-} weather;
-
+WeatherData weather;
+MakerData maker;
 const unsigned long WEATHER_INTERVAL = 15UL * 60UL * 1000UL;
 bool timerRunning = false;
 unsigned long timerEndsAt = 0;
 uint32_t timerDurationSec = 25 * 60;
 unsigned long lastDraw = 0, lastTouch = 0;
+uint32_t timerPresetSec=25*60;
+bool timerFinished=false;
 int lastMinuteDrawn = -1;
 
-static const uint16_t C_BG=0x0000, C_PANEL=0x1082, C_PANEL2=0x18E3;
-static const uint16_t C_TEXT=0xFFFF, C_MUTED=0x9CF3, C_CYAN=0x04FF;
-static const uint16_t C_GREEN=0x366B, C_YELLOW=0xFD20;
-static const uint16_t C_BLUE=0x04FF, C_RED=0xF986;
+// Preserve the verified ST7789 inversion setting used on this CYD2USB.
+// This panel displays the complement of RGB565; neutral cards stay neutral.
+static const uint16_t C_BG=0x0000, C_PANEL=0x0841, C_PANEL2=0x1082;
+static const uint16_t C_TEXT=0xE71C, C_MUTED=0x8C70, C_CYAN=0xFC20;
+static const uint16_t C_GREEN=0xFC20, C_YELLOW=0x0BFF;
+static const uint16_t C_BLUE=0xFC20, C_RED=0x07DF;
 
 void drawTimer();
 
@@ -79,6 +88,8 @@ void loadPrefs(){
   cfgCity=prefs.getString("city","Brno"); cfgTZ=prefs.getString("tz","CET-1CEST,M3.5.0,M10.5.0/3");
   cfgCustomLink=prefs.getString("link","https://example.com");
   cfgLat=prefs.getFloat("lat",49.1951f); cfgLon=prefs.getFloat("lon",16.6068f);
+  cfgMakerURL=prefs.getString("makerurl",cfgMakerURL);
+  cfgBrightness=prefs.getUChar("brightness",180);
   prefs.end();
 }
 
@@ -86,7 +97,8 @@ void savePrefs(){
   prefs.begin("desk-dash",false);
   prefs.putString("ssid",cfgSsid); prefs.putString("pass",cfgPass); prefs.putString("city",cfgCity);
   prefs.putString("tz",cfgTZ); prefs.putString("link",cfgCustomLink);
-  prefs.putFloat("lat",cfgLat); prefs.putFloat("lon",cfgLon); prefs.end();
+  prefs.putFloat("lat",cfgLat); prefs.putFloat("lon",cfgLon);
+  prefs.putString("makerurl",cfgMakerURL); prefs.putUChar("brightness",cfgBrightness); prefs.end();
 }
 
 String esc(String s){
@@ -100,10 +112,11 @@ String esc(String s){
 String setupPage(){
   String ip=setupMode?WiFi.softAPIP().toString():WiFi.localIP().toString();
   String h="<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'><title>Desk Dashboard</title>";
-  h+="<style>body{font-family:system-ui;background:#0b1017;color:#f5f7fa;padding:24px}.w{max-width:620px;margin:auto}.c{background:#121b25;border:1px solid #233445;border-radius:18px;padding:20px;margin:0 0 16px}input{width:100%;box-sizing:border-box;padding:12px;border-radius:10px;border:1px solid #31465a;background:#0d151e;color:white}label{display:block;margin:12px 0 5px}button{width:100%;padding:13px;border:0;border-radius:11px;background:#11b8f3;font-weight:700;margin-top:16px}</style></head><body><div class='w'>";
+  h+="<style>body{font-family:system-ui;background:#f5f5f7;color:#1d1d1f;padding:24px}.w{max-width:620px;margin:auto}.c{background:#fff;border:1px solid #e5e5ea;border-radius:18px;padding:20px;margin:0 0 16px}input{width:100%;box-sizing:border-box;padding:12px;border-radius:10px;border:1px solid #d1d1d6;background:#f9f9fb;color:#1d1d1f}label{display:block;margin:12px 0 5px}button{width:100%;padding:13px;border:0;border-radius:11px;background:#007aff;color:white;font-weight:700;margin-top:16px}</style></head><body><div class='w'>";
   h+="<div class='c'><h1>Universal Desk Dashboard</h1><p>Device IP: "+ip+"</p></div><form method='POST' action='/save'>";
   h+="<div class='c'><h2>Wi-Fi</h2><label>SSID</label><input name='ssid' value='"+esc(cfgSsid)+"'><label>Password</label><input type='password' name='pass' value='"+esc(cfgPass)+"'></div>";
   h+="<div class='c'><h2>Location & time</h2><label>City</label><input name='city' value='"+esc(cfgCity)+"'><label>Latitude</label><input name='lat' value='"+String(cfgLat,5)+"'><label>Longitude</label><input name='lon' value='"+String(cfgLon,5)+"'><label>POSIX timezone</label><input name='tz' value='"+esc(cfgTZ)+"'></div>";
+  h+="<div class='c'><h2>MakerWorld</h2><p>Public HTTPS JSON endpoint. Old measurements are labelled on screen.</p><label>Stats URL</label><input name='makerurl' value='"+esc(cfgMakerURL)+"'><label>Brightness (20-255)</label><input type='number' min='20' max='255' name='brightness' value='"+String(cfgBrightness)+"'></div>";
   h+="<div class='c'><h2>Custom</h2><label>Custom link</label><input name='link' value='"+esc(cfgCustomLink)+"'><button type='submit'>Save & restart</button></div></form></div></body></html>";
   return h;
 }
@@ -114,6 +127,12 @@ void startWebServer(){
     if(server.hasArg("ssid"))cfgSsid=server.arg("ssid"); if(server.hasArg("pass"))cfgPass=server.arg("pass");
     if(server.hasArg("city"))cfgCity=server.arg("city"); if(server.hasArg("lat"))cfgLat=server.arg("lat").toFloat();
     if(server.hasArg("lon"))cfgLon=server.arg("lon").toFloat(); if(server.hasArg("tz"))cfgTZ=server.arg("tz");
+    if(server.hasArg("makerurl")) {
+      String u=server.arg("makerurl"); u.trim();
+      if(u.length()>256 || (u.length() && !u.startsWith("https://"))) {server.send(400,"text/plain","Use a public https:// JSON URL (max 256 characters)."); return;}
+      cfgMakerURL=u;
+    }
+    if(server.hasArg("brightness"))cfgBrightness=constrain(server.arg("brightness").toInt(),20,255);
     if(server.hasArg("link"))cfgCustomLink=server.arg("link"); savePrefs();
     server.send(200,"text/html","<h2>Saved. Restarting...</h2>"); delay(700); ESP.restart();
   });
@@ -127,14 +146,63 @@ void connectWiFi(){
   if(setupMode){WiFi.mode(WIFI_AP);WiFi.softAPConfig(apIP,apIP,IPAddress(255,255,255,0));WiFi.softAP(AP_NAME);dns.start(53,"*",apIP);} startWebServer();
 }
 
-String weatherText(int c){if(c==0)return"Clear";if(c<=3)return"Partly cloudy";if(c==45||c==48)return"Fog";if((c>=51&&c<=67)||(c>=80&&c<=82))return"Rain";if(c>=71&&c<=77)return"Snow";if(c>=95)return"Thunderstorm";return"Weather";}
+String weatherText(int c){if(c<0)return"Unknown";if(c==0)return"Clear";if(c<=3)return"Partly cloudy";if(c==45||c==48)return"Fog";if((c>=51&&c<=67)||(c>=80&&c<=82))return"Rain";if((c>=71&&c<=77)||c==85||c==86)return"Snow";if(c>=95)return"Thunderstorm";return"Weather";}
 
-void fetchWeather(){
-  if(WiFi.status()!=WL_CONNECTED)return;
-  String url="https://api.open-meteo.com/v1/forecast?latitude="+String(cfgLat,5)+"&longitude="+String(cfgLon,5)+"&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=1";
-  WiFiClientSecure client; client.setInsecure(); HTTPClient http; if(!http.begin(client,url))return; int st=http.GET();
-  if(st==200){JsonDocument doc; if(!deserializeJson(doc,http.getString())){weather.temp=doc["current"]["temperature_2m"]|0.0;weather.humidity=doc["current"]["relative_humidity_2m"]|0;weather.feels=doc["current"]["apparent_temperature"]|weather.temp;weather.code=doc["current"]["weather_code"]|-1;weather.wind=doc["current"]["wind_speed_10m"]|0.0;weather.tmax=doc["daily"]["temperature_2m_max"][0]|0.0;weather.tmin=doc["daily"]["temperature_2m_min"][0]|0.0;weather.valid=true;weather.updatedAt=millis();}}
-  http.end();
+class BoundedJSONReader {
+  Stream& stream; size_t left=65536;
+public:
+  explicit BoundedJSONReader(Stream& s):stream(s){}
+  int read(){char c;if(!left || !stream.readBytes(&c,1))return -1;--left;return (uint8_t)c;}
+  size_t readBytes(char* b,size_t n){n=n<left?n:left;size_t got=stream.readBytes(b,n);left-=got;return got;}
+};
+
+bool fetchJSON(const String& url, JsonDocument& doc) {
+  if(WiFi.status()!=WL_CONNECTED) return false;
+  WiFiClientSecure client; client.setInsecure(); client.setHandshakeTimeout(5);
+  HTTPClient http; http.setConnectTimeout(5000); http.setTimeout(5000);
+  http.useHTTP10(true); // Stream a decoded response without HTTP chunk framing.
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  if(!http.begin(client,url)) return false;
+  bool ok=false;
+  if(http.GET()==200) {
+    int size=http.getSize();
+    // Bound allocations on a 4 MB ESP32; oversized custom feeds are rejected.
+    if(size<=65536) {
+      http.getStream().setTimeout(5000);
+      BoundedJSONReader body(http.getStream());
+      ok=!deserializeJson(doc,body);
+    }
+  }
+  http.end(); return ok;
+}
+
+void networkTask(void*) {
+  WeatherData cachedWeather; MakerData cachedMaker;
+  const String makerURL=cfgMakerURL; const float lat=cfgLat,lon=cfgLon;
+  uint32_t nextWeather=0, nextMaker=0;
+  bool first=true;
+  for(;;) {
+    uint32_t now=millis();
+    if(WiFi.status()==WL_CONNECTED) {
+      if(first || (int32_t)(now-nextWeather)>=0) {
+        JsonDocument doc;
+        String url="https://api.open-meteo.com/v1/forecast?latitude="+String(lat,5)+"&longitude="+String(lon,5)+"&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m&hourly=temperature_2m,precipitation_probability,weather_code&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max,sunrise,sunset&timezone=auto&forecast_days=5&forecast_hours=12";
+        bool ok=fetchJSON(url,doc) && parseWeather(doc.as<JsonVariantConst>(),cachedWeather,millis());
+        cachedWeather.failed=!ok;
+        xQueueOverwrite(weatherQueue,&cachedWeather);
+        nextWeather=millis()+(ok?WEATHER_INTERVAL:120000UL);
+      }
+      if(makerURL.length() && (first || (int32_t)(now-nextMaker)>=0)) {
+        JsonDocument doc;
+        bool ok=fetchJSON(makerURL,doc) && parseMaker(doc.as<JsonVariantConst>(),cachedMaker,millis());
+        cachedMaker.failed=!ok;
+        xQueueOverwrite(makerQueue,&cachedMaker);
+        nextMaker=millis()+(ok?1800000UL:120000UL);
+      }
+      first=false;
+    }
+    if(ulTaskNotifyTake(pdTRUE,pdMS_TO_TICKS(1000))) first=true;
+  }
 }
 
 void card(int x,int y,int w,int h,uint16_t color=C_PANEL){
@@ -173,210 +241,178 @@ void drawGearGlyph(int x,int y,uint16_t color){
   }
 }
 
+void textAt(const String& value,int x,int y,int font=2,uint16_t color=C_TEXT) {
+  lcd.setTextDatum(TL_DATUM); lcd.setTextFont(font); lcd.setTextColor(color); lcd.drawString(value,x,y);
+}
+void hero(const String& value,int x,int y) {
+  lcd.setTextDatum(TL_DATUM); lcd.setFreeFont(&FreeSansBold24pt7b);
+  lcd.setTextColor(C_TEXT); lcd.drawString(value,x,y); lcd.setTextFont(2);
+}
+String temperatureLabel(float temp) { return String((int)roundf(temp))+String((char)127); } // TFT built-in degree glyph
+uint32_t timerLeft() { return remainingSeconds(timerRunning,timerEndsAt,timerDurationSec,millis()); }
+String timerText() { uint32_t r=timerLeft(); char b[10]; snprintf(b,sizeof(b),"%02lu:%02lu",(unsigned long)(r/60),(unsigned long)(r%60)); return b; }
+bool makerOld() { time_t now=time(nullptr); return maker.valid && (now<1700000000 || now-maker.latest.stamp>36*3600 || maker.latest.stamp>now+300); }
+String makerValue(int64_t value) { if(value<0)return "--"; char b[24]; snprintf(b,sizeof(b),"%lld",(long long)value); return b; }
+String makerStatus() { return !maker.valid?(maker.failed?"Source unavailable":"Waiting for data"):(makerOld()?"OLD DATA":(maker.failed?"Update failed":"Latest measurement")); }
+void pageDots() {
+  for(int i=0;i<6;i++) lcd.fillCircle(135+i*10,234,2,currentScreen==(Screen)i?C_BLUE:C_MUTED);
+}
+void weatherIcon(int code,int x,int y) {
+  if(code<0) {lcd.drawCircle(x,y,5,C_MUTED);return;}
+  if(code==0) {
+    lcd.drawCircle(x,y,4,C_BLUE);
+    for(int i=0;i<8;i++){float a=i*PI/4;lcd.drawLine(x+cosf(a)*7,y+sinf(a)*7,x+cosf(a)*9,y+sinf(a)*9,C_BLUE);}
+  } else {
+    lcd.fillCircle(x-4,y,4,C_MUTED);lcd.fillCircle(x+1,y-3,5,C_MUTED);
+    lcd.fillCircle(x+6,y,4,C_MUTED);lcd.fillRect(x-4,y,10,4,C_MUTED);
+    if(code>=51) {lcd.drawLine(x-3,y+7,x-5,y+10,C_BLUE);lcd.drawLine(x+4,y+7,x+2,y+10,C_BLUE);}
+  }
+}
+void icon(Icon kind,int x,int y,uint16_t color=C_MUTED){
+  if(kind==SUN){
+    lcd.drawCircle(x,y,8,color);
+    for(int i=0;i<8;i++){float a=i*PI/4;lcd.drawLine(x+cosf(a)*12,y+sinf(a)*12,x+cosf(a)*17,y+sinf(a)*17,color);}
+  }else if(kind==FOCUS_ICON){
+    lcd.drawCircle(x,y+2,13,color);lcd.drawFastHLine(x-5,y-16,10,color);
+    lcd.drawFastVLine(x,y-15,4,color);lcd.drawLine(x,y+2,x,y-5,color);lcd.drawLine(x,y+2,x+6,y+2,color);
+  }else if(kind==STATS_ICON){
+    lcd.drawFastHLine(x-14,y+14,30,color);
+    for(int i=0;i<3;i++){int h=10+i*9;lcd.drawRoundRect(x-12+i*10,y+12-h,6,h,2,color);}
+  }else if(kind==GEAR){
+    lcd.drawCircle(x,y,10,color);lcd.drawCircle(x,y,4,color);
+    for(int i=0;i<8;i++){float a=i*PI/4;lcd.drawLine(x+cosf(a)*11,y+sinf(a)*11,x+cosf(a)*15,y+sinf(a)*15,color);}
+  }else if(kind==DOWNLOAD_ICON){
+    lcd.drawLine(x,y-10,x,y+7,color);lcd.drawLine(x,y+7,x-6,y+1,color);lcd.drawLine(x,y+7,x+6,y+1,color);
+    lcd.drawFastHLine(x-9,y+12,18,color);lcd.drawFastVLine(x-9,y+7,5,color);lcd.drawFastVLine(x+9,y+7,5,color);
+  }else if(kind==HEART_ICON){
+    lcd.drawCircle(x-5,y-3,5,color);lcd.drawCircle(x+5,y-3,5,color);
+    lcd.fillRect(x-9,y-1,19,6,C_PANEL);lcd.drawLine(x-10,y-1,x,y+11,color);lcd.drawLine(x+10,y-1,x,y+11,color);
+  }else if(kind==PEOPLE_ICON){
+    lcd.drawCircle(x,y-7,4,color);lcd.drawRoundRect(x-8,y,16,12,5,color);
+    lcd.drawCircle(x+11,y-5,3,color);lcd.drawLine(x+12,y+1,x+15,y+10,color);
+  }else if(kind==PRINT_ICON){
+    lcd.drawRoundRect(x-11,y-6,22,16,3,color);lcd.drawRect(x-7,y-12,14,6,color);
+    lcd.drawRect(x-7,y+3,14,11,color);lcd.drawFastHLine(x-3,y+7,6,color);
+  }else if(kind==WIFI_ICON){
+    for(int r=6;r<=16;r+=5)lcd.drawArc(x,y+8,r,r-1,135,225,color,C_PANEL,true);
+    lcd.fillCircle(x,y+8,2,color);
+  }else if(kind==WEB_ICON){
+    lcd.drawRoundRect(x-10,y-17,20,34,4,color);lcd.drawFastHLine(x-5,y+11,10,color);
+    lcd.drawCircle(x,y-3,6,color);lcd.drawLine(x-6,y-3,x+6,y-3,color);lcd.drawLine(x,y-9,x,y+3,color);
+  }
+}
 void drawHome(){
   lcd.fillScreen(C_BG);
-
-  struct tm t;
-  char tb[6]="--:--";
-  char db[28]="Waiting for time";
-  if(getLocalTime(&t,50)){
-    strftime(tb,sizeof(tb),"%H:%M",&t);
-    strftime(db,sizeof(db),"%A, %d %B",&t);
+  struct tm t;char tb[6]="--:--",db[28]="Waiting for time";
+  if(getLocalTime(&t,5)){strftime(tb,sizeof(tb),"%H:%M",&t);strftime(db,sizeof(db),"%A, %d %B",&t);}
+  textAt(cfgCity.substring(0,20),12,15,2,C_MUTED);
+  if(WiFi.status()==WL_CONNECTED)drawWifiGlyph(270,24,C_MUTED);
+  icon(GEAR,303,24);
+  lcd.setTextDatum(MC_DATUM);lcd.setFreeFont(&FreeSansBold24pt7b);lcd.setTextSize(2);
+  lcd.setTextColor(C_TEXT);lcd.drawString(tb,160,109);lcd.setTextSize(1);lcd.setTextFont(2);
+  lcd.setTextColor(C_MUTED);lcd.drawString(db,160,170);
+  if(weather.valid){
+    weatherIcon(weather.code,128,203);lcd.setTextDatum(ML_DATUM);lcd.drawString(temperatureLabel(weather.temp)+" C",148,203);
   }
-
-  // Apple-like top area: time is the hero, setup stays subtle.
-  lcd.setTextDatum(TL_DATUM);
-  lcd.setTextFont(7);
-  lcd.setTextColor(C_TEXT);
-  lcd.drawString(tb,12,8);
-
-  lcd.setTextFont(2);
-  lcd.setTextColor(C_MUTED);
-  lcd.drawString(db,14,57);
-
-  if(WiFi.status()==WL_CONNECTED) drawWifiGlyph(275,24,C_TEXT);
-  drawGearGlyph(305,24,C_MUTED);
-
-  // Weather widget.
-  card(8,82,148,62,C_PANEL);
-  lcd.setTextDatum(TL_DATUM);
-  lcd.setTextFont(1);
-  lcd.setTextColor(C_MUTED);
-  lcd.drawString("WEATHER",20,93);
-  lcd.setTextFont(4);
-  lcd.setTextColor(C_TEXT);
-  lcd.drawString(weather.valid?String(weather.temp,0)+" C":"-- C",20,108);
-  lcd.setTextDatum(TR_DATUM);
-  lcd.setTextFont(1);
-  lcd.setTextColor(C_MUTED);
-  String wt=weather.valid?weatherText(weather.code):"Loading";
-  if(wt.length()>15) wt=wt.substring(0,15);
-  lcd.drawString(wt,145,121);
-
-  // Focus widget.
-  card(164,82,148,62,C_PANEL);
-  lcd.setTextDatum(TL_DATUM);
-  lcd.setTextFont(1);
-  lcd.setTextColor(C_MUTED);
-  lcd.drawString("FOCUS",176,93);
-  uint32_t r=timerDurationSec;
-  if(timerRunning){
-    long ms=(long)(timerEndsAt-millis());
-    r=ms>0?ms/1000:0;
-  }
-  char b[10];
-  snprintf(b,sizeof(b),"%02lu:%02lu",(unsigned long)(r/60),(unsigned long)(r%60));
-  lcd.setTextFont(4);
-  lcd.setTextColor(timerRunning?C_GREEN:C_TEXT);
-  lcd.drawString(b,176,108);
-  lcd.setTextDatum(TR_DATUM);
-  lcd.setTextFont(1);
-  lcd.setTextColor(C_MUTED);
-  lcd.drawString(timerRunning?"Running":"Ready",300,121);
-
-  // Today widget.
-  card(8,152,148,78,C_PANEL);
-  lcd.setTextDatum(TL_DATUM);
-  lcd.setTextFont(1);
-  lcd.setTextColor(C_MUTED);
-  lcd.drawString("TODAY",20,163);
-  lcd.setTextFont(2);
-  lcd.setTextColor(C_TEXT);
-  lcd.drawString(weather.valid?("H "+String(weather.tmax,0)+"  L "+String(weather.tmin,0)):"H --  L --",20,181);
-  lcd.setTextFont(1);
-  lcd.setTextColor(C_MUTED);
-  lcd.drawString(weather.valid?("Humidity "+String(weather.humidity)+"%"):"Weather pending",20,210);
-
-  // Connection widget.
-  card(164,152,148,78,WiFi.status()==WL_CONNECTED?0x1125:C_PANEL);
-  lcd.setTextDatum(TL_DATUM);
-  lcd.setTextFont(1);
-  lcd.setTextColor(WiFi.status()==WL_CONNECTED?C_GREEN:C_MUTED);
-  lcd.drawString(WiFi.status()==WL_CONNECTED?"CONNECTED":"OFFLINE",176,163);
-  lcd.setTextFont(2);
-  lcd.setTextColor(C_TEXT);
-  String ss=cfgSsid.length()?cfgSsid:"Wi-Fi";
-  if(ss.length()>16) ss=ss.substring(0,16);
-  lcd.drawString(ss,176,181);
-  lcd.setTextFont(1);
-  lcd.setTextColor(C_MUTED);
-  lcd.drawString(WiFi.status()==WL_CONNECTED?WiFi.localIP().toString():"Tap to setup",176,210);
+  pageDots();
 }
-
+void drawApps(){
+  lcd.fillScreen(C_BG);appleHeader("",true);
+  const Icon icons[]={SUN,FOCUS_ICON,STATS_ICON,GEAR};
+  for(int i=0;i<4;i++){int x=10+(i%2)*155,y=43+(i/2)*91;card(x,y,145,82);icon(icons[i],x+72,y+41,C_BLUE);}
+  pageDots();
+}
 void drawWeather(){
-  lcd.fillScreen(C_BG);
-  appleHeader("Weather",true);
-
-  lcd.setTextDatum(TL_DATUM);
-  lcd.setTextFont(1);
-  lcd.setTextColor(C_MUTED);
-  lcd.drawString(cfgCity,20,49);
-
-  lcd.setTextFont(7);
-  lcd.setTextColor(C_TEXT);
-  lcd.drawString(weather.valid?String(weather.temp,0)+" C":"-- C",18,64);
-
-  lcd.setTextFont(2);
-  lcd.setTextColor(C_MUTED);
-  lcd.drawString(weather.valid?weatherText(weather.code):"Loading...",20,111);
-
-  card(12,140,92,84,C_PANEL);
-  card(114,140,92,84,C_PANEL);
-  card(216,140,92,84,C_PANEL);
-
-  lcd.setTextDatum(MC_DATUM);
-  lcd.setTextFont(1);
-  lcd.setTextColor(C_MUTED);
-  lcd.drawString("HUMIDITY",58,154);
-  lcd.drawString("WIND",160,154);
-  lcd.drawString("HIGH / LOW",262,154);
-
-  lcd.setTextFont(2);
-  lcd.setTextColor(C_TEXT);
-  lcd.drawString(weather.valid?String(weather.humidity)+"%":"--",58,182);
-  lcd.drawString(weather.valid?String(weather.wind,0)+" km/h":"--",160,182);
-  lcd.drawString(weather.valid?String(weather.tmax,0)+" / "+String(weather.tmin,0):"-- / --",262,182);
-
-  lcd.setTextFont(1);
-  lcd.setTextColor(C_MUTED);
-  lcd.drawString(weather.valid?("Feels "+String(weather.feels,0)+" C"):"",58,207);
-}
-
-void drawTimer(){
-  lcd.fillScreen(C_BG);
-  appleHeader("Focus",true);
-
-  uint32_t r=timerDurationSec;
-  if(timerRunning){
-    long ms=(long)(timerEndsAt-millis());
-    if(ms<=0){timerRunning=false;r=0;}
-    else r=ms/1000;
-  }
-  char b[10];
-  snprintf(b,sizeof(b),"%02lu:%02lu",(unsigned long)(r/60),(unsigned long)(r%60));
-
-  // Simple Apple Watch-like focus ring.
-  for(int rr=61;rr<=65;rr++) lcd.drawCircle(160,104,rr,0x2124);
-  if(timerRunning){
-    for(int rr=61;rr<=65;rr++){
-      lcd.drawArc(160,104,rr,rr-1,200,340,C_BLUE,C_BG,true);
-      lcd.drawArc(160,104,rr,rr-1,20,160,C_CYAN,C_BG,true);
+  lcd.fillScreen(C_BG);appleHeader(weatherDaily?"5-day forecast":"Weather",true);
+  textAt(cfgCity.substring(0,20),12,44,2,C_MUTED);
+  textAt(weather.valid?temperatureLabel(weather.temp):"--",12,62,4);
+  textAt(weather.valid?weatherText(weather.code):"Waiting for weather",72,64,2,C_MUTED);
+  textAt(weather.valid?"Feels "+temperatureLabel(weather.feels)+"  Humidity "+String(weather.humidity)+"%":"Connect to Wi-Fi",12,93,1,C_MUTED);
+  if(!weatherDaily) {
+    card(8,111,304,76);
+    textAt("NEXT 6 HOURS",18,119,1,C_MUTED);
+    for(int i=0;i<6;i++) {
+      auto& h=weather.hours[i]; int x=18+i*49;
+      textAt(h.valid?String(h.hour).substring(0,2):"--",x,133,1,C_MUTED);
+      weatherIcon(h.valid?h.code:-1,x+30,140);
+      textAt(h.valid?temperatureLabel(h.temp):"--",x,147,2);
+      textAt(h.rain>=0?String(h.rain)+"%":"--",x,170,1,C_BLUE);
+    }
+    textAt("Sun "+String(weather.sunrise)+" / "+String(weather.sunset)+"    Wind "+String(weather.wind,0)+" km/h",12,196,1,C_MUTED);
+  } else {
+    card(8,108,304,95);
+    for(int i=0;i<5;i++) {
+      auto& d=weather.days[i]; int y=112+i*18;
+      String name=i==0?"Today":String(d.date).substring(8,10)+"/"+String(d.date).substring(5,7);
+      textAt(d.valid?name:"--",18,y,1,C_MUTED);
+      weatherIcon(d.valid?d.code:-1,95,y+6);
+      textAt(d.valid?temperatureLabel(d.high)+" / "+temperatureLabel(d.low):"-- / --",122,y,1);
+      textAt(d.rain>=0?String(d.rain)+"%":"--",263,y,1,C_BLUE);
     }
   }
-
-  lcd.setTextDatum(MC_DATUM);
-  lcd.setTextFont(7);
-  lcd.setTextColor(C_TEXT);
-  lcd.drawString(b,160,92);
-  lcd.setTextFont(2);
-  lcd.setTextColor(C_MUTED);
-  lcd.drawString(timerRunning?"Running":"Ready",160,124);
-
-  lcd.fillRoundRect(72,163,176,37,18,timerRunning?0x2945:C_GREEN);
-  lcd.setTextFont(2);
-  lcd.setTextColor(C_TEXT);
-  lcd.drawString(timerRunning?"PAUSE":"START",160,181);
-
-  const char* p[]={"25","5","15"};
-  int xx[]={70,160,250};
-  for(int i=0;i<3;i++){
-    lcd.fillRoundRect(xx[i]-31,207,62,27,13,C_PANEL);
-    lcd.setTextFont(1);
-    lcd.setTextColor(C_TEXT);
-    lcd.drawString(String(p[i])+" min",xx[i],220);
+  textAt(weatherDaily?"< Hourly":"5 days >",244,215,1,C_BLUE);
+  textAt(weather.failed?"Update failed":(weather.valid?"Open-Meteo":"Loading"),12,215,1,C_MUTED);
+  pageDots();
+}
+void drawTimer(){
+  lcd.fillScreen(C_BG);appleHeader("Focus",true);
+  uint32_t r=timerLeft();
+  for(int rr=54;rr<=57;rr++) lcd.drawCircle(160,101,rr,C_PANEL2);
+  if(timerPresetSec && r) {
+    int progress=constrain((int)(360.0f*r/timerPresetSec),1,360);
+    lcd.drawArc(160,101,57,54,0,progress,C_BLUE,C_BG,true);
   }
+  lcd.setTextDatum(MC_DATUM);lcd.setFreeFont(&FreeSansBold18pt7b);
+  lcd.setTextColor(C_TEXT);lcd.drawString(timerText(),160,87);lcd.setTextFont(2);
+  lcd.setTextColor(C_MUTED);lcd.drawString(timerRunning?"Focus":(timerFinished?"Complete":(r==timerPresetSec?"Ready":"Paused")),160,118);
+  card(54,161,135,34,C_BLUE);card(199,161,67,34,C_PANEL);
+  lcd.setTextDatum(MC_DATUM);lcd.setTextColor(C_BG);lcd.drawString(timerRunning?"Pause":"Start",121,178);
+  lcd.setTextColor(C_MUTED);lcd.drawString("Reset",232,178);
+  const char* preset[]={"25 min","5 min","15 min"};
+  for(int i=0;i<3;i++){card(32+i*90,202,76,25);lcd.setTextFont(1);lcd.setTextColor(C_TEXT);lcd.drawString(preset[i],70+i*90,214);}
+  pageDots();
+}
+void drawMakerWorld(){
+  lcd.fillScreen(C_BG);appleHeader("MakerWorld",true);
+  textAt("NASIK",12,44,1,C_MUTED);textAt(makerStatus(),154,44,1,makerOld()?C_RED:C_MUTED);
+  const Icon names[]={PRINT_ICON,DOWNLOAD_ICON,HEART_ICON,PEOPLE_ICON};
+  int64_t values[]={maker.latest.prints,maker.latest.downloads,maker.latest.likes,maker.latest.followers};
+  for(int i=0;i<4;i++) {
+    int x=8+(i%2)*156,y=60+(i/2)*56;card(x,y,148,50);
+    icon(names[i],x+22,y+24);textAt(makerValue(values[i]),x+42,y+13,4);
+  }
+  textAt("RECENT PRINT TOTALS",12,177,1,C_MUTED);
+  if(maker.count>=2) {
+    int64_t lo=maker.samples[0].prints,hi=lo;
+    for(int i=1;i<maker.count;i++){lo=lo<maker.samples[i].prints?lo:maker.samples[i].prints;hi=hi>maker.samples[i].prints?hi:maker.samples[i].prints;}
+    int prevX=0,prevY=0;
+    for(int i=0;i<maker.count;i++) {
+      int x=14+(int)((maker.samples[i].stamp-maker.samples[0].stamp)*290/(maker.samples[maker.count-1].stamp-maker.samples[0].stamp));
+      int y=hi==lo?200:211-(int)((maker.samples[i].prints-lo)*22/(hi-lo));
+      if(i)lcd.drawLine(prevX,prevY,x,y,C_BLUE);lcd.fillCircle(x,y,2,C_BLUE);prevX=x;prevY=y;
+    }
+  } else textAt("More measurements needed",12,195,1,C_MUTED);
+  String stamp=maker.valid?String(maker.measured).substring(0,10)+" "+String(maker.measured).substring(11,16)+" UTC":"Set data URL in web setup";
+  textAt(stamp,12,219,1,C_MUTED);pageDots();
 }
 
 void drawSettings(){
-  lcd.fillScreen(C_BG);
-  appleHeader("Setup",true);
-
-  card(10,50,300,49,C_PANEL);
-  card(10,106,300,49,C_PANEL);
-  card(10,162,300,49,C_PANEL);
-
-  lcd.setTextDatum(ML_DATUM);
-  lcd.setTextFont(2);
-  lcd.setTextColor(C_TEXT);
-  lcd.drawString("Wi-Fi",24,66);
-  lcd.drawString("Weather",24,122);
-  lcd.drawString("Device",24,178);
-
-  lcd.setTextFont(1);
-  lcd.setTextColor(C_MUTED);
-  String net=WiFi.status()==WL_CONNECTED?(cfgSsid+"  "+WiFi.localIP().toString()):"Choose network";
-  if(net.length()>34) net=net.substring(0,34);
-  lcd.drawString(net,24,86);
-  lcd.drawString(cfgCity+"  "+String(cfgLat,2)+", "+String(cfgLon,2),24,142);
-  lcd.drawString("CYD 2.8  |  ST7789  |  Touch",24,198);
-
-  lcd.setTextDatum(MR_DATUM);
-  lcd.setTextFont(2);
-  lcd.setTextColor(C_MUTED);
-  lcd.drawString(">",294,74);
-  lcd.drawString(">",294,130);
+  lcd.fillScreen(C_BG);appleHeader("",true);
+  const Icon icons[]={WIFI_ICON,SUN,STATS_ICON,WEB_ICON};
+  for(int i=0;i<4;i++){int x=10+(i%2)*155,y=43+(i/2)*75;card(x,y,145,66);icon(icons[i],x+72,y+29,C_BLUE);}
+  lcd.setTextDatum(MC_DATUM);lcd.setTextFont(1);lcd.setTextColor(C_MUTED);
+  lcd.drawString("Wi-Fi",82,95);lcd.drawString(String(cfgBrightness*100/255)+"%",237,95);
+  lcd.drawString("MakerWorld",82,170);lcd.drawString("Web setup",237,170);
+  String ip=setupMode?WiFi.softAPIP().toString():WiFi.localIP().toString();
+  lcd.drawString(ip,160,198);pageDots();
 }
 
+void drawWebInfo(){
+  lcd.fillScreen(C_BG);appleHeader("Web setup",true);
+  textAt("Open on your phone:",24,84);
+  textAt("http://"+(setupMode?WiFi.softAPIP().toString():WiFi.localIP().toString()),24,115);
+  textAt("Tap to return",24,164,1,C_MUTED);
+}
 
 void scanWifiNetworks(){
   lcd.fillScreen(C_BG);
@@ -531,7 +567,7 @@ void connectSelectedWifi(){
     savePrefs();
     setupMode=false;
     configTzTime(cfgTZ.c_str(),"pool.ntp.org","time.nist.gov");
-    fetchWeather();
+    if(networkTaskHandle)xTaskNotifyGive(networkTaskHandle);
     showWifiResult(true);
     currentScreen=HOME;
     redraw();
@@ -543,8 +579,8 @@ void connectSelectedWifi(){
   }
 }
 
-void redraw(){if(currentScreen==HOME)drawHome();else if(currentScreen==WEATHER)drawWeather();else if(currentScreen==TIMER)drawTimer();else if(currentScreen==SETTINGS)drawSettings();else if(currentScreen==WIFI_LIST)drawWifiList();else drawWifiKeyboard();lastDraw=millis();}
-void setTimerMinutes(int m){timerDurationSec=m*60;timerRunning=false;drawTimer();}
+void redraw(){if(currentScreen==HOME)drawHome();else if(currentScreen==APPS)drawApps();else if(currentScreen==WEATHER)drawWeather();else if(currentScreen==TIMER)drawTimer();else if(currentScreen==MAKERWORLD)drawMakerWorld();else if(currentScreen==SETTINGS)drawSettings();else if(currentScreen==WIFI_LIST)drawWifiList();else if(currentScreen==WEB_INFO)drawWebInfo();else drawWifiKeyboard();lastDraw=millis();}
+void setTimerMinutes(int m){timerPresetSec=m*60;timerDurationSec=timerPresetSec;timerRunning=false;timerFinished=false;drawTimer();}
 
 bool readTouch(uint16_t &x, uint16_t &y){
   if(!ts.touched()) return false;
@@ -556,11 +592,8 @@ bool readTouch(uint16_t &x, uint16_t &y){
   return true;
 }
 
-void handleTouch(){
-  uint16_t x,y;
-  if(!readTouch(x,y)) return;
-  if(millis()-lastTouch<220) return;
-  lastTouch=millis();
+void handleTap(uint16_t x,uint16_t y){
+  if(currentScreen==WEB_INFO){currentScreen=SETTINGS;redraw();return;}
 
   if(currentScreen==WIFI_LIST){
     if(y<42 && x<60){ currentScreen=SETTINGS; redraw(); return; }
@@ -629,55 +662,101 @@ void handleTouch(){
   }
 
   if(currentScreen==HOME){
-    if(y<48 && x>280){ currentScreen=SETTINGS; redraw(); return; }
-    if(y>=82 && y<146){
-      if(x<160){ currentScreen=WEATHER; redraw(); }
-      else { currentScreen=TIMER; redraw(); }
-      return;
-    }
-    if(y>=150 && x>=160){ currentScreen=SETTINGS; redraw(); return; }
+    if(y<48 && x>280){currentScreen=SETTINGS;redraw();return;}
+    currentScreen=APPS;redraw();return;
+  }
+  if(currentScreen==APPS){
+    if(y<42 && x<60){currentScreen=HOME;redraw();return;}
+    if(y>=43 && y<216){int index=(y>=134?2:0)+(x>=165?1:0);const Screen pages[]={WEATHER,TIMER,MAKERWORLD,SETTINGS};currentScreen=pages[index];redraw();}
     return;
   }
 
+  if(currentScreen==MAKERWORLD){if(y<42 && x<60){currentScreen=HOME;redraw();}return;}
+
   if(currentScreen==WEATHER){
     if(y<45 && x<60){ currentScreen=HOME; redraw(); }
+    else if(y>=207 && y<230){weatherDaily=!weatherDaily;redraw();}
     return;
   }
 
   if(currentScreen==SETTINGS){
-    if(y<45 && x<60){ currentScreen=HOME; redraw(); return; }
-    if(y>=48 && y<=101){
-      scanWifiNetworks();
-      currentScreen=WIFI_LIST;
-      drawWifiList();
-      return;
-    }
+    if(y<42 && x<60){currentScreen=HOME;redraw();return;}
+    if(y>=43 && y<=109){
+      if(x<160){scanWifiNetworks();currentScreen=WIFI_LIST;drawWifiList();}
+      else{cfgBrightness=cfgBrightness<80?120:(cfgBrightness<160?200:(cfgBrightness<240?255:40));analogWrite(TFT_BL,cfgBrightness);savePrefs();redraw();}
+    }else if(y>=118 && y<=184){
+      if(x<160){currentScreen=MAKERWORLD;redraw();}
+      else{currentScreen=WEB_INFO;redraw();}
+    }else redraw();
     return;
   }
 
   if(currentScreen==TIMER){
     if(y<45 && x<60){ currentScreen=HOME; redraw(); return; }
 
-    if(y>=158 && y<=202){
-      if(timerRunning){
-        long ms=(long)(timerEndsAt-millis());
-        timerDurationSec=ms>0?ms/1000:0;
-        timerRunning=false;
-      }else{
-        timerEndsAt=millis()+(unsigned long)timerDurationSec*1000UL;
-        timerRunning=true;
+    if(y>=161 && y<=195){
+      if(x>=199 && x<=266){timerRunning=false;timerFinished=false;timerDurationSec=timerPresetSec;}
+      else if(x>=54 && x<=189){
+        if(timerRunning){timerDurationSec=timerLeft();timerRunning=false;}
+        else {if(!timerDurationSec)timerDurationSec=timerPresetSec;timerFinished=false;timerEndsAt=millis()+timerDurationSec*1000UL;timerRunning=true;}
       }
-      redraw();
-      return;
+      redraw();return;
     }
-
-    if(y>=205){
-      if(x<115)setTimerMinutes(25);
-      else if(x<205)setTimerMinutes(5);
-      else setTimerMinutes(15);
+    if(y>=202 && y<=227){
+      if(x>=32 && x<108)setTimerMinutes(25);
+      else if(x>=122 && x<198)setTimerMinutes(5);
+      else if(x>=212 && x<288)setTimerMinutes(15);
     }
   }
 }
 
-void setup(){Serial.begin(115200);loadPrefs();lcd.init();lcd.setRotation(1);delay(50);lcd.invertDisplay(true);delay(50);pinMode(TFT_BL,OUTPUT);analogWrite(TFT_BL,180);SPI.begin(T_CLK,T_DOUT,T_DIN);ts.begin();ts.setRotation(1);lcd.fillScreen(C_BG);lcd.setTextDatum(MC_DATUM);lcd.setTextColor(C_TEXT);lcd.setTextFont(2);lcd.drawString("Universal Desk Dashboard",160,102);lcd.setTextFont(1);lcd.setTextColor(C_MUTED);lcd.drawString("Starting...",160,130);connectWiFi();if(!setupMode&&WiFi.status()==WL_CONNECTED){configTzTime(cfgTZ.c_str(),"pool.ntp.org","time.nist.gov");fetchWeather();redraw();}else{scanWifiNetworks();currentScreen=WIFI_LIST;drawWifiList();}}
-void loop(){if(setupMode)dns.processNextRequest();server.handleClient();handleTouch();if(!setupMode&&WiFi.status()==WL_CONNECTED){if(!weather.valid||millis()-weather.updatedAt>WEATHER_INTERVAL)fetchWeather();}struct tm t;if(currentScreen==HOME&&getLocalTime(&t,5)&&t.tm_min!=lastMinuteDrawn){lastMinuteDrawn=t.tm_min;drawHome();}if(currentScreen==TIMER&&timerRunning&&millis()-lastDraw>1000)drawTimer();delay(10);}
+// Tap only on release. A swipe cannot start timers or open widgets on press.
+void handleTouch(){
+  static bool pressed=false;static uint16_t startX=0,startY=0,endX=0,endY=0;
+  static uint32_t started=0,releasedAt=0;static Screen origin=HOME;
+  uint16_t x,y;bool down=readTouch(x,y);
+  if(down){
+    releasedAt=0;
+    if(!pressed){pressed=true;startX=x;startY=y;started=millis();origin=currentScreen;}
+    endX=x;endY=y;return;
+  }
+  if(!pressed)return;
+  // Resistive touch can briefly disappear during motion.
+  if(!releasedAt){releasedAt=millis();return;}
+  if(millis()-releasedAt<35)return;
+  pressed=false;releasedAt=0;
+  if(origin!=currentScreen || millis()-lastTouch<120)return;
+  int dx=(int)endX-startX,dy=(int)endY-startY;lastTouch=millis();
+  if(origin<=SETTINGS && abs(dx)>=45 && abs(dx)>abs(dy)*2){
+    int index=(int)origin+(dx<0?1:-1);currentScreen=(Screen)((index+6)%6);redraw();return;
+  }
+  if(abs(dx)>14 || abs(dy)>14 || millis()-started>1500)return;
+  if(origin<=SETTINGS && endY>=228 && endX>=128 && endX<=190){
+    int index=constrain(((int)endX-130)/10,0,5);currentScreen=(Screen)index;redraw();return;
+  }
+  handleTap(startX,startY);
+}
+
+void setup(){
+  Serial.begin(115200);loadPrefs();lcd.init();lcd.setRotation(1);delay(50);lcd.invertDisplay(true);
+  pinMode(TFT_BL,OUTPUT);analogWrite(TFT_BL,cfgBrightness);
+  SPI.begin(T_CLK,T_DOUT,T_DIN);ts.begin();ts.setRotation(1);
+  lcd.fillScreen(C_BG);textAt("Universal Desk Dashboard",32,102);textAt("Starting...",126,130,1,C_MUTED);
+  connectWiFi();
+  weatherQueue=xQueueCreate(1,sizeof(WeatherData));makerQueue=xQueueCreate(1,sizeof(MakerData));
+  if(weatherQueue && makerQueue)xTaskCreatePinnedToCore(networkTask,"dashboard-network",12288,nullptr,1,&networkTaskHandle,0);
+  if(!setupMode && WiFi.status()==WL_CONNECTED){configTzTime(cfgTZ.c_str(),"pool.ntp.org","time.nist.gov");redraw();}
+  else{scanWifiNetworks();currentScreen=WIFI_LIST;drawWifiList();}
+}
+void loop(){
+  if(setupMode)dns.processNextRequest();server.handleClient();handleTouch();
+  bool changed=false;WeatherData w;MakerData m;
+  if(weatherQueue && xQueueReceive(weatherQueue,&w,0)==pdTRUE){weather=w;changed=true;}
+  if(makerQueue && xQueueReceive(makerQueue,&m,0)==pdTRUE){maker=m;changed=true;}
+  if(timerRunning && !timerLeft()){timerRunning=false;timerFinished=true;timerDurationSec=0;changed=true;}
+  struct tm t;
+  if(currentScreen==HOME && getLocalTime(&t,5) && t.tm_min!=lastMinuteDrawn){lastMinuteDrawn=t.tm_min;changed=true;}
+  if(currentScreen==TIMER && timerRunning && millis()-lastDraw>=1000)changed=true;
+  if(changed && currentScreen<=SETTINGS)redraw();
+  delay(10);
+}
