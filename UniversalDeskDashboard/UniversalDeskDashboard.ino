@@ -44,7 +44,7 @@ Preferences prefs;
 WebServer server(80);
 DNSServer dns;
 
-enum Screen { HOME, APPS, WEATHER, TIMER, MAKERWORLD, SETTINGS, WIFI_LIST, WIFI_KEYBOARD, WEB_INFO };
+enum Screen { HOME, APPS, WEATHER, TIMER, MAKERWORLD, SETTINGS, WIFI_LIST, WIFI_KEYBOARD, WEB_INFO, GRAPHICS_OPTIONS, DISPLAY_OPTIONS, TIME_OPTIONS, WEATHER_OPTIONS };
 Screen currentScreen = HOME;
 
 String cfgSsid, cfgPass;
@@ -52,7 +52,11 @@ String cfgCity = "Brno";
 String cfgTZ = "CET-1CEST,M3.5.0,M10.5.0/3";
 String cfgCustomLink = "https://example.com";
 String cfgMakerURL = "https://raw.githubusercontent.com/nasik987/nasik-makerworld-monitor/main/data/history.json";
-uint8_t cfgBrightness=180;
+DisplayConfig displayConfig;
+uint8_t& cfgBrightness=displayConfig.brightness;
+portMUX_TYPE locationMux=portMUX_INITIALIZER_UNLOCKED;
+uint32_t locationRevision=0;
+struct WeatherUpdate {WeatherData data;uint32_t location;};
 bool weatherDaily=false;
 QueueHandle_t weatherQueue, makerQueue;
 TaskHandle_t networkTaskHandle=nullptr;
@@ -78,12 +82,27 @@ int lastMinuteDrawn = -1;
 
 // Preserve the verified ST7789 inversion setting used on this CYD2USB.
 // This panel displays the complement of RGB565; neutral cards stay neutral.
-static const uint16_t C_BG=DeskTheme::native(DeskTheme::background), C_PANEL=DeskTheme::native(DeskTheme::panel), C_PANEL2=DeskTheme::native(DeskTheme::line);
-static const uint16_t C_TEXT=DeskTheme::native(DeskTheme::text), C_MUTED=DeskTheme::native(DeskTheme::muted), C_CYAN=DeskTheme::native(DeskTheme::accent);
-static const uint16_t C_GREEN=DeskTheme::native(DeskTheme::success), C_YELLOW=DeskTheme::native(DeskTheme::warning);
-static const uint16_t C_BLUE=DeskTheme::native(DeskTheme::accent), C_RED=DeskTheme::native(DeskTheme::error);
+static uint16_t C_BG=DeskTheme::native(DeskTheme::background), C_PANEL=DeskTheme::native(DeskTheme::panel), C_PANEL2=DeskTheme::native(DeskTheme::line);
+static uint16_t C_TEXT=DeskTheme::native(DeskTheme::text), C_MUTED=DeskTheme::native(DeskTheme::muted), C_CYAN=DeskTheme::native(DeskTheme::accent);
+static uint16_t C_GREEN=DeskTheme::native(DeskTheme::success), C_YELLOW=DeskTheme::native(DeskTheme::warning);
+static uint16_t C_BLUE=DeskTheme::native(DeskTheme::accent), C_RED=DeskTheme::native(DeskTheme::error);
+static uint16_t C_ON_ACCENT=DeskTheme::native(DeskTheme::text);
 
 void drawTimer();
+
+void applyColors(){
+  auto c=DeskTheme::palette(displayConfig.lightTheme,displayConfig.accentIndex);
+  C_BG=DeskTheme::native(c.background);C_PANEL=DeskTheme::native(c.panel);C_PANEL2=DeskTheme::native(c.line);
+  C_TEXT=DeskTheme::native(c.text);C_MUTED=DeskTheme::native(c.muted);C_CYAN=C_BLUE=DeskTheme::native(c.accent);
+  C_ON_ACCENT=DeskTheme::native(c.onAccent);
+}
+void applyBrightness(bool force=false){
+  static uint32_t checked=0;static int applied=-1;uint32_t now=millis();
+  if(!force&&now-checked<1000)return;checked=now;
+  struct tm t;int hour=displayConfig.nightDim&&getLocalTime(&t,5)?t.tm_hour:-1;
+  int level=displayBrightness(displayConfig,hour);
+  if(level!=applied){analogWrite(TFT_BL,level);applied=level;}
+}
 
 void loadPrefs(){
   prefs.begin("desk-dash", true);
@@ -93,6 +112,11 @@ void loadPrefs(){
   cfgLat=prefs.getFloat("lat",49.1951f); cfgLon=prefs.getFloat("lon",16.6068f);
   cfgMakerURL=prefs.getString("makerurl",cfgMakerURL);
   cfgBrightness=prefs.getUChar("brightness",180);
+  displayConfig.nightBrightness=prefs.getUChar("nightlevel",40);
+  displayConfig.nightStart=prefs.getUChar("nightstart",22);displayConfig.nightEnd=prefs.getUChar("nightend",7);
+  displayConfig.nightDim=prefs.getBool("nightdim",false);displayConfig.lightTheme=prefs.getBool("lighttheme",false);
+  displayConfig.accentIndex=prefs.getUChar("accent",0);displayConfig.twelveHour=prefs.getBool("twelvehour",false);
+  sanitizeDisplay(displayConfig);applyColors();
   prefs.end();
 }
 
@@ -101,7 +125,10 @@ void savePrefs(){
   prefs.putString("ssid",cfgSsid); prefs.putString("pass",cfgPass); prefs.putString("city",cfgCity);
   prefs.putString("tz",cfgTZ); prefs.putString("link",cfgCustomLink);
   prefs.putFloat("lat",cfgLat); prefs.putFloat("lon",cfgLon);
-  prefs.putString("makerurl",cfgMakerURL); prefs.putUChar("brightness",cfgBrightness); prefs.end();
+  prefs.putString("makerurl",cfgMakerURL); prefs.putUChar("brightness",cfgBrightness);
+  prefs.putUChar("nightlevel",displayConfig.nightBrightness);prefs.putUChar("nightstart",displayConfig.nightStart);prefs.putUChar("nightend",displayConfig.nightEnd);
+  prefs.putBool("nightdim",displayConfig.nightDim);prefs.putBool("lighttheme",displayConfig.lightTheme);prefs.putUChar("accent",displayConfig.accentIndex);prefs.putBool("twelvehour",displayConfig.twelveHour);
+  prefs.end();
 }
 
 String esc(String s){
@@ -181,18 +208,21 @@ bool fetchJSON(const String& url, JsonDocument& doc) {
 
 void networkTask(void*) {
   WeatherData cachedWeather; MakerData cachedMaker;
-  const String makerURL=cfgMakerURL; const float lat=cfgLat,lon=cfgLon;
+  const String makerURL=cfgMakerURL;uint32_t cachedLocation=0xffffffff;
   uint32_t nextWeather=0, nextMaker=0;
   bool first=true;
   for(;;) {
     uint32_t now=millis();
     if(WiFi.status()==WL_CONNECTED) {
       if(first || (int32_t)(now-nextWeather)>=0) {
+        float lat,lon;uint32_t revision;
+        portENTER_CRITICAL(&locationMux);lat=cfgLat;lon=cfgLon;revision=locationRevision;portEXIT_CRITICAL(&locationMux);
+        if(revision!=cachedLocation){cachedWeather=WeatherData();cachedLocation=revision;}
         JsonDocument doc;
         String url="https://api.open-meteo.com/v1/forecast?latitude="+String(lat,5)+"&longitude="+String(lon,5)+"&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m&hourly=temperature_2m,precipitation_probability,weather_code&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max,sunrise,sunset&timezone=auto&forecast_days=5&forecast_hours=12";
         bool ok=fetchJSON(url,doc) && parseWeather(doc.as<JsonVariantConst>(),cachedWeather,millis());
         cachedWeather.failed=!ok;
-        xQueueOverwrite(weatherQueue,&cachedWeather);
+        WeatherUpdate update{cachedWeather,revision};xQueueOverwrite(weatherQueue,&update);
         nextWeather=millis()+(ok?WEATHER_INTERVAL:120000UL);
       }
       if(makerURL.length() && (first || (int32_t)(now-nextMaker)>=0)) {
@@ -257,12 +287,13 @@ public:
 } surface;
 
 void drawPage(int page){
-  DeskView v;struct tm t;char clock[6]="--:--",date[32]="Waiting for time";
-  if(getLocalTime(&t,5)){strftime(clock,sizeof(clock),"%H:%M",&t);strftime(date,sizeof(date),"%A, %d %B",&t);}
+  DeskView v;struct tm t;char clock[6]="--:--",date[32]="Waiting for time",period[3]="";
+  if(getLocalTime(&t,5)){formatDisplayClock(t.tm_hour,t.tm_min,displayConfig.twelveHour,clock,sizeof(clock),period,sizeof(period));strftime(date,sizeof(date),"%A, %d %B",&t);}
   String countdown=timerText();String ip=setupMode?WiFi.softAPIP().toString():WiFi.localIP().toString();
   v.clock=clock;v.date=date;v.city=cfgCity.c_str();v.countdown=countdown.c_str();v.ip=ip.c_str();
   v.connected=WiFi.status()==WL_CONNECTED;v.daily=weatherDaily;v.running=timerRunning;v.finished=timerFinished;
   v.oldData=makerOld();v.left=timerLeft();v.preset=timerPresetSec;v.brightness=cfgBrightness*100/255;
+  v.config=displayConfig;v.period=period;v.latitude=cfgLat;v.longitude=cfgLon;int zone=zonePresetIndex(cfgTZ.c_str());v.zone=zone<0?"Custom":ZonePresets[zone].name;
   v.stopwatchMode=stopwatchMode;v.stopwatchRunning=stopwatch.running();v.stopwatchElapsed=stopwatch.elapsed(millis());
   DeskRenderer<DeviceSurface> renderer(surface);
   for(int top=0;top<240;top+=80){surface.top=top;renderer.render(page,v,weather,maker);surface.present();}
@@ -390,6 +421,7 @@ void drawWifiKeyboard(){
   lcd.drawString("123",95,216);
   lcd.drawString("Del",159,216);
   lcd.drawString("Back",223,216);
+  lcd.setTextColor(C_ON_ACCENT);
   lcd.drawString("Connect",288,216);
 }
 
@@ -440,7 +472,7 @@ void connectSelectedWifi(){
   }
 }
 
-void redraw(){if(currentScreen==HOME)drawHome();else if(currentScreen==APPS)drawApps();else if(currentScreen==WEATHER)drawWeather();else if(currentScreen==TIMER)drawTimer();else if(currentScreen==MAKERWORLD)drawMakerWorld();else if(currentScreen==SETTINGS)drawSettings();else if(currentScreen==WIFI_LIST)drawWifiList();else if(currentScreen==WEB_INFO)drawWebInfo();else drawWifiKeyboard();lastDraw=millis();}
+void redraw(){if(currentScreen==HOME)drawHome();else if(currentScreen==APPS)drawApps();else if(currentScreen==WEATHER)drawWeather();else if(currentScreen==TIMER)drawTimer();else if(currentScreen==MAKERWORLD)drawMakerWorld();else if(currentScreen==SETTINGS)drawSettings();else if(currentScreen==WIFI_LIST)drawWifiList();else if(currentScreen==WEB_INFO)drawWebInfo();else if(currentScreen>=GRAPHICS_OPTIONS)drawPage(7+(int)currentScreen-(int)GRAPHICS_OPTIONS);else drawWifiKeyboard();lastDraw=millis();}
 void setTimerMinutes(int m){timerPresetSec=m*60;timerDurationSec=timerPresetSec;timerRunning=false;timerFinished=false;drawTimer();}
 
 bool readTouch(uint16_t &x, uint16_t &y){
@@ -541,14 +573,31 @@ void handleTap(uint16_t x,uint16_t y){
   }
 
   if(currentScreen==SETTINGS){
-    if(y<42 && x<60){currentScreen=HOME;redraw();return;}
-    if(y>=43 && y<=109){
-      if(x<160){scanWifiNetworks();currentScreen=WIFI_LIST;drawWifiList();}
-      else{cfgBrightness=cfgBrightness<80?120:(cfgBrightness<160?200:(cfgBrightness<240?255:40));analogWrite(TFT_BL,cfgBrightness);savePrefs();redraw();}
-    }else if(y>=118 && y<=184){
-      if(x<160){currentScreen=MAKERWORLD;redraw();}
-      else{currentScreen=WEB_INFO;redraw();}
-    }else redraw();
+    if(y<42&&x<60){currentScreen=HOME;redraw();return;}
+    for(int i=0;i<6;i++){int bx=16+(i%2)*152,by=43+(i/2)*59;
+      if(x>=bx&&x<=bx+136&&y>=by&&y<=by+51){
+        const Screen targets[]={WIFI_LIST,GRAPHICS_OPTIONS,DISPLAY_OPTIONS,TIME_OPTIONS,WEATHER_OPTIONS,WEB_INFO};
+        currentScreen=targets[i];if(currentScreen==WIFI_LIST){scanWifiNetworks();drawWifiList();}else redraw();return;
+      }
+    }
+    return;
+  }
+  if(currentScreen>=GRAPHICS_OPTIONS){
+    if(y<42&&x<60){currentScreen=SETTINGS;redraw();return;}
+    int page=7+(int)currentScreen-(int)GRAPHICS_OPTIONS;
+    if(visualSettingTap(displayConfig,page,x,y)){applyColors();applyBrightness(true);savePrefs();lastMinuteDrawn=-1;redraw();return;}
+    if(currentScreen==TIME_OPTIONS&&x>=16&&x<=304&&y>=108&&y<=158){
+      int next=(zonePresetIndex(cfgTZ.c_str())+1)%4;cfgTZ=ZonePresets[next].rule;
+      configTzTime(cfgTZ.c_str(),"pool.ntp.org","time.nist.gov");applyBrightness(true);savePrefs();lastMinuteDrawn=-1;redraw();return;
+    }
+    if(currentScreen==WEATHER_OPTIONS){
+      if(x>=16&&x<=304&&y>=51&&y<=98){
+        int next=(cityPresetIndex(cfgCity.c_str())+1)%5;cfgCity=CityPresets[next].name;
+        portENTER_CRITICAL(&locationMux);cfgLat=CityPresets[next].lat;cfgLon=CityPresets[next].lon;++locationRevision;portEXIT_CRITICAL(&locationMux);
+        weather=WeatherData();savePrefs();if(networkTaskHandle)xTaskNotifyGive(networkTaskHandle);redraw();return;
+      }
+      if(x>=16&&x<=304&&y>=191&&y<=226){if(networkTaskHandle)xTaskNotifyGive(networkTaskHandle);redraw();return;}
+    }
     return;
   }
 
@@ -610,25 +659,25 @@ void handleTouch(){
 void setup(){
   Serial.begin(115200);loadPrefs();lcd.init();lcd.setRotation(1);delay(50);lcd.invertDisplay(true);
   surface.begin();
-  pinMode(TFT_BL,OUTPUT);analogWrite(TFT_BL,cfgBrightness);
+  pinMode(TFT_BL,OUTPUT);applyBrightness(true);
   SPI.begin(T_CLK,T_DOUT,T_DIN);ts.begin();ts.setRotation(1);
   lcd.fillScreen(C_BG);textAt("Universal Desk Dashboard",32,102);textAt("Starting...",126,130,1,C_MUTED);
   connectWiFi();
-  weatherQueue=xQueueCreate(1,sizeof(WeatherData));makerQueue=xQueueCreate(1,sizeof(MakerData));
+  weatherQueue=xQueueCreate(1,sizeof(WeatherUpdate));makerQueue=xQueueCreate(1,sizeof(MakerData));
   if(weatherQueue && makerQueue)xTaskCreatePinnedToCore(networkTask,"dashboard-network",12288,nullptr,1,&networkTaskHandle,0);
   if(!setupMode && WiFi.status()==WL_CONNECTED){configTzTime(cfgTZ.c_str(),"pool.ntp.org","time.nist.gov");redraw();}
   else{scanWifiNetworks();currentScreen=WIFI_LIST;drawWifiList();}
 }
 void loop(){
-  stopwatch.tick(millis());
+  stopwatch.tick(millis());applyBrightness();
   if(setupMode)dns.processNextRequest();server.handleClient();handleTouch();
-  bool changed=false;WeatherData w;MakerData m;
-  if(weatherQueue && xQueueReceive(weatherQueue,&w,0)==pdTRUE){weather=w;changed=true;}
+  bool changed=false;WeatherUpdate w;MakerData m;
+  if(weatherQueue && xQueueReceive(weatherQueue,&w,0)==pdTRUE&&w.location==locationRevision){weather=w.data;changed=true;}
   if(makerQueue && xQueueReceive(makerQueue,&m,0)==pdTRUE){maker=m;changed=true;}
   if(timerRunning && !timerLeft()){timerRunning=false;timerFinished=true;timerDurationSec=0;changed=true;}
   struct tm t;
   if(currentScreen==HOME && getLocalTime(&t,5) && t.tm_min!=lastMinuteDrawn){lastMinuteDrawn=t.tm_min;changed=true;}
   if(currentScreen==TIMER && ((stopwatchMode && stopwatch.running() && millis()-lastDraw>=100) || (!stopwatchMode && timerRunning && millis()-lastDraw>=1000)))changed=true;
-  if(changed && currentScreen<=SETTINGS)redraw();
+  if(changed && (currentScreen<=SETTINGS||currentScreen>=GRAPHICS_OPTIONS))redraw();
   delay(10);
 }

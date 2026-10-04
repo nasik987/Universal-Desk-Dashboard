@@ -2,6 +2,7 @@
 #include "DeskAssets.h"
 #include "DeskTheme.h"
 #include "StopwatchIcon.h"
+#include "DisplaySettings.h"
 #include "DashboardData.h"
 #include <math.h>
 #include <string.h>
@@ -14,6 +15,9 @@ struct DeskView {
   uint32_t left=1500,preset=1500; int brightness=70;
   bool stopwatchMode=false, stopwatchRunning=false;
   uint64_t stopwatchElapsed=0;
+  DisplayConfig config;
+  const char* period="";const char* zone="Central EU";
+  float latitude=49.1951f,longitude=16.6068f;
 };
 
 // Shared production renderer: native previews and the ESP32 use these same pixels.
@@ -25,7 +29,7 @@ template<class Surface> class DeskRenderer {
       (((((f>>5)&63)*a+((b>>5)&63)*(255-a)+127)/255)<<5)|
       (((f&31)*a+(b&31)*(255-a)+127)/255);
   }
-  uint16_t paper=DeskTheme::background,panel=DeskTheme::panel,ink=DeskTheme::text,muted=DeskTheme::muted,blue=DeskTheme::accent,line=DeskTheme::line;
+  uint16_t paper=DeskTheme::background,panel=DeskTheme::panel,ink=DeskTheme::text,muted=DeskTheme::muted,blue=DeskTheme::accent,line=DeskTheme::line,outline=DeskTheme::outline,onAccent=DeskTheme::text;
   static unsigned codepoint(const char*& p){
     unsigned c=(uint8_t)*p++;
     if(c>=0xC0 && c<0xE0 && *p){c=((c&31)<<6)|((uint8_t)*p++&63);}
@@ -66,8 +70,16 @@ template<class Surface> class DeskRenderer {
     }
   }
   void tile(int x,int y,int w,int h,int r){
-    round(x,y,w,h,r,DeskTheme::outline,paper);
-    round(x+1,y+1,w-2,h-2,r-1,panel,DeskTheme::outline);
+    round(x,y,w,h,r,outline,paper);
+    round(x+1,y+1,w-2,h-2,r-1,panel,outline);
+  }
+  void option(int x,int y,int w,int h,const char* label,bool active){
+    uint16_t edge=active?blue:outline;round(x,y,w,h,10,edge,paper);round(x+1,y+1,w-2,h-2,9,panel,edge);
+    center(label,x+w/2,y+h/2+5,FontBody,active?blue:ink,panel);
+  }
+  void slider(int y,uint8_t value){
+    int pos=(value-20)*280/235;round(20,y,280,6,3,line,paper);if(pos>=6)round(20,y,pos,6,3,blue,line);
+    round(13+pos,y-4,14,14,7,blue,paper);
   }
   void dots(int page){for(int i=0;i<6;i++)round(132+i*10,231,i==page?6:4,4,2,i==page?blue:line,paper);}
   void header(const char* title){icon(IconBack24,12,10,muted,paper);center(title,160,28,FontTitle,ink,paper);}
@@ -97,6 +109,8 @@ template<class Surface> class DeskRenderer {
 public:
   explicit DeskRenderer(Surface& surface):s(surface){}
   void render(int page,const DeskView& v,const WeatherData& w,const MakerData& m){
+    auto colors=DeskTheme::palette(v.config.lightTheme,v.config.accentIndex);
+    paper=colors.background;panel=colors.panel;ink=colors.text;muted=colors.muted;blue=colors.accent;line=colors.line;outline=colors.outline;onAccent=colors.onAccent;
     s.fillRect(0,0,320,240,paper);
     char b[64],a[32];
     if(page==0){
@@ -105,6 +119,7 @@ public:
       icon(IconSettings24,286,12,muted,paper);
       center(v.clock,160,148,FontClock,ink,paper);
       center(v.date,160,180,FontBody,muted,paper);
+      if(*v.period)text(v.period,280,180,FontSmall,muted,paper);
       if(w.valid){temp(b,sizeof(b),true,w.temp);int tw=width(b,FontBody);int x=160-(tw+36)/2;
         round(x-9,193,tw+54,27,13,panel,paper);icon(weatherIcon(w.code),x,194,blue,panel);text(b,x+34,212,FontBody,ink,panel);
       }
@@ -147,14 +162,14 @@ public:
         center(b,160,121,width(b,FontFocus)<=284?FontFocus:FontMetric,ink,paper);
         snprintf(b,sizeof(b),".%02u",(unsigned)(v.stopwatchElapsed/10%100));center(b,160,147,FontTitle,muted,paper);
         round(54,161,135,34,16,blue,paper);tile(199,161,67,34,16);
-        icon(v.stopwatchRunning?IconPause24:IconPlay24,109,166,ink,blue);icon(IconReset24,220,166,muted,panel);
+        icon(v.stopwatchRunning?IconPause24:IconPlay24,109,166,onAccent,blue);icon(IconReset24,220,166,muted,panel);
         center(v.stopwatchRunning?"Running":(v.stopwatchElapsed?"Paused":"Ready"),160,219,FontBody,muted,paper);
       }else{
       center(v.countdown,160,121,FontFocus,ink,paper);
       center(v.running?"Focus time":(v.finished?"Complete":(v.left==v.preset?"Ready":"Paused")),160,146,FontBody,muted,paper);
       round(70,151,180,3,1,line,paper);if(v.preset && v.left){int n=(int)(180.0*v.left/v.preset);if(n>180)n=180;if(n<3)n=3;round(70,151,n,3,1,blue,line);}
       round(54,161,135,34,16,blue,paper);tile(199,161,67,34,16);
-      icon(v.running?IconPause24:IconPlay24,109,166,ink,blue);icon(IconReset24,220,166,muted,panel);
+      icon(v.running?IconPause24:IconPlay24,109,166,onAccent,blue);icon(IconReset24,220,166,muted,panel);
       const char* labels[]={"25 min","5 min","15 min"};int durations[]={1500,300,900};
       for(int i=0;i<3;i++){int x=32+i*90;round(x,202,76,25,12,panel,paper);center(labels[i],x+38,219,FontSmall,v.preset==(uint32_t)durations[i]?blue:muted,panel);}
       }
@@ -173,10 +188,31 @@ public:
       }else text("More measurements needed",18,207,FontSmall,muted,paper);
       if(m.valid){snprintf(b,sizeof(b),"%.10s  %.5s UTC",m.measured,m.measured+11);text(b,18,225,FontSmall,muted,paper);}
     }else if(page==5){
-      header("");const AAIcon* icons[]={&IconWifi24,&IconSun24,&IconStats24,&IconWeb24};
-      const char* labels[]={"Wi-Fi",b,"MakerWorld","Web setup"};snprintf(b,sizeof(b),"%d%%",v.brightness);
-      for(int i=0;i<4;i++){int x=16+(i%2)*152,y=43+(i/2)*75;tile(x,y,136,66,16);icon(*icons[i],x+56,y+9,blue,panel);center(labels[i],x+68,y+56,FontSmall,muted,panel);}
-      center(v.ip,160,209,FontSmall,muted,paper);
+      header("Settings");const AAIcon* icons[]={&IconWifi24,&IconSettings24,&IconSun24,&IconFocus24,&IconWeather24,&IconWeb24};
+      const char* labels[]={"Wi-Fi","Graphics","Display","Time","Weather","Web setup"};
+      for(int i=0;i<6;i++){int x=16+(i%2)*152,y=43+(i/2)*59;tile(x,y,136,51,13);icon(*icons[i],x+56,y+5,blue,panel);center(labels[i],x+68,y+43,FontSmall,muted,panel);}
+      center(v.ip,160,225,FontSmall,muted,paper);
+    }else if(page==7){
+      header("Graphics");tile(16,48,288,42,12);text("Theme",28,75,FontBody,ink,panel);
+      option(154,53,66,32,"Dark",!v.config.lightTheme);option(226,53,68,32,"Light",v.config.lightTheme);
+      text("Icon & button color",20,119,FontBody,ink,paper);
+      const char* names[]={"Blue","Mint","Purple","Orange",v.config.lightTheme?"Gray":"White"};
+      for(int i=0;i<5;i++){int x=20+i*58;uint16_t ac=DeskTheme::accentColor(i,v.config.lightTheme);round(x,133,48,42,12,i==v.config.accentIndex?ink:line,paper);round(x+2,135,44,38,10,ac,i==v.config.accentIndex?ink:line);center(names[i],x+24,195,FontSmall,muted,paper);}
+      center("Saved automatically",160,228,FontSmall,muted,paper);
+    }else if(page==8){
+      header("Display");text("Brightness",20,55,FontBody,ink,paper);snprintf(b,sizeof(b),"%d%%",v.config.brightness*100/255);text(b,263,55,FontBody,muted,paper);slider(68,v.config.brightness);
+      tile(16,87,288,34,12);text("Night dim",28,110,FontBody,ink,panel);round(249,94,48,20,10,v.config.nightDim?blue:line,panel);round(v.config.nightDim?280:252,97,14,14,7,v.config.nightDim?onAccent:muted,v.config.nightDim?blue:line);
+      text("Night hours",20,150,FontBody,ink,paper);snprintf(b,sizeof(b),"%02d:00",v.config.nightStart);option(160,129,64,34,b,false);snprintf(b,sizeof(b),"%02d:00",v.config.nightEnd);option(232,129,64,34,b,false);
+      text("Night level",20,178,FontBody,ink,paper);snprintf(b,sizeof(b),"%d%%",v.config.nightBrightness*100/255);text(b,263,178,FontBody,muted,paper);slider(190,v.config.nightBrightness);
+      center("Tap hours to adjust",160,227,FontSmall,muted,paper);
+    }else if(page==9){
+      header("Time");tile(16,48,288,48,12);text("Clock format",28,77,FontBody,ink,panel);option(178,53,58,38,"12 h",v.config.twelveHour);option(242,53,58,38,"24 h",!v.config.twelveHour);
+      tile(16,108,288,50,12);text("Time zone",28,139,FontBody,ink,panel);text(v.zone,161,139,FontBody,blue,panel,296);
+      center("Tap zone to cycle",160,182,FontSmall,muted,paper);center(v.clock,160,219,FontTitle,ink,paper);text(v.period,203,219,FontSmall,muted,paper);
+    }else if(page==10){
+      header("Weather");tile(16,51,288,47,12);text("City",28,81,FontBody,ink,panel);text(v.city,148,81,FontTitle,blue,panel,296);
+      center("Tap city to choose",160,123,FontSmall,muted,paper);snprintf(b,sizeof(b),"%.4f, %.4f",v.latitude,v.longitude);center(b,160,161,FontBody,muted,paper);
+      tile(16,191,288,35,12);icon(IconReset24,89,196,blue,panel);text("Refresh",127,214,FontBody,ink,panel);
     }
     if(page==6){header("Web setup");center("Open on your phone",160,100,FontBody,muted,paper);center(v.ip,160,138,FontTitle,ink,paper);center("Tap to return",160,192,FontSmall,muted,paper);}
     if(page<6)dots(page);
