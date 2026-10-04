@@ -8,6 +8,7 @@
 #include <ArduinoJson.h>
 #include <time.h>
 #include "DashboardData.h"
+#include "DeskUI.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
@@ -43,7 +44,6 @@ WebServer server(80);
 DNSServer dns;
 
 enum Screen { HOME, APPS, WEATHER, TIMER, MAKERWORLD, SETTINGS, WIFI_LIST, WIFI_KEYBOARD, WEB_INFO };
-enum Icon { SUN, FOCUS_ICON, STATS_ICON, GEAR, DOWNLOAD_ICON, HEART_ICON, PEOPLE_ICON, PRINT_ICON, WIFI_ICON, WEB_ICON };
 Screen currentScreen = HOME;
 
 String cfgSsid, cfgPass;
@@ -224,195 +224,52 @@ void appleHeader(const String &title,bool back=false){
   }
 }
 
-void drawWifiGlyph(int x,int y,uint16_t color){
-  lcd.drawCircle(x,y,11,color);
-  lcd.fillRect(x-13,y-12,26,13,C_BG);
-  lcd.drawCircle(x,y,7,color);
-  lcd.fillRect(x-9,y-8,18,9,C_BG);
-  lcd.fillCircle(x,y+5,2,color);
-}
-
-void drawGearGlyph(int x,int y,uint16_t color){
-  lcd.drawCircle(x,y,8,color);
-  lcd.drawCircle(x,y,3,color);
-  for(int i=-1;i<=1;i+=2){
-    lcd.drawFastHLine(x-12,y+i*6,24,color);
-    lcd.drawFastVLine(x+i*6,y-12,24,color);
-  }
-}
-
 void textAt(const String& value,int x,int y,int font=2,uint16_t color=C_TEXT) {
-  lcd.setTextDatum(TL_DATUM); lcd.setTextFont(font); lcd.setTextColor(color); lcd.drawString(value,x,y);
+  lcd.setTextDatum(TL_DATUM);lcd.setTextFont(font);lcd.setTextColor(color);lcd.drawString(value,x,y);
 }
-void hero(const String& value,int x,int y) {
-  lcd.setTextDatum(TL_DATUM); lcd.setFreeFont(&FreeSansBold24pt7b);
-  lcd.setTextColor(C_TEXT); lcd.drawString(value,x,y); lcd.setTextFont(2);
-}
-String temperatureLabel(float temp) { return String((int)roundf(temp))+String((char)127); } // TFT built-in degree glyph
-uint32_t timerLeft() { return remainingSeconds(timerRunning,timerEndsAt,timerDurationSec,millis()); }
-String timerText() { uint32_t r=timerLeft(); char b[10]; snprintf(b,sizeof(b),"%02lu:%02lu",(unsigned long)(r/60),(unsigned long)(r%60)); return b; }
-bool makerOld() { time_t now=time(nullptr); return maker.valid && (now<1700000000 || now-maker.latest.stamp>36*3600 || maker.latest.stamp>now+300); }
-String makerValue(int64_t value) { if(value<0)return "--"; char b[24]; snprintf(b,sizeof(b),"%lld",(long long)value); return b; }
-String makerStatus() { return !maker.valid?(maker.failed?"Source unavailable":"Waiting for data"):(makerOld()?"OLD DATA":(maker.failed?"Update failed":"Latest measurement")); }
-void pageDots() {
-  for(int i=0;i<6;i++) lcd.fillCircle(135+i*10,234,2,currentScreen==(Screen)i?C_BLUE:C_MUTED);
-}
-void weatherIcon(int code,int x,int y) {
-  if(code<0) {lcd.drawCircle(x,y,5,C_MUTED);return;}
-  if(code==0) {
-    lcd.drawCircle(x,y,4,C_BLUE);
-    for(int i=0;i<8;i++){float a=i*PI/4;lcd.drawLine(x+cosf(a)*7,y+sinf(a)*7,x+cosf(a)*9,y+sinf(a)*9,C_BLUE);}
-  } else {
-    lcd.fillCircle(x-4,y,4,C_MUTED);lcd.fillCircle(x+1,y-3,5,C_MUTED);
-    lcd.fillCircle(x+6,y,4,C_MUTED);lcd.fillRect(x-4,y,10,4,C_MUTED);
-    if(code>=51) {lcd.drawLine(x-3,y+7,x-5,y+10,C_BLUE);lcd.drawLine(x+4,y+7,x+2,y+10,C_BLUE);}
-  }
-}
-void icon(Icon kind,int x,int y,uint16_t color=C_MUTED){
-  if(kind==SUN){
-    lcd.drawCircle(x,y,8,color);
-    for(int i=0;i<8;i++){float a=i*PI/4;lcd.drawLine(x+cosf(a)*12,y+sinf(a)*12,x+cosf(a)*17,y+sinf(a)*17,color);}
-  }else if(kind==FOCUS_ICON){
-    lcd.drawCircle(x,y+2,13,color);lcd.drawFastHLine(x-5,y-16,10,color);
-    lcd.drawFastVLine(x,y-15,4,color);lcd.drawLine(x,y+2,x,y-5,color);lcd.drawLine(x,y+2,x+6,y+2,color);
-  }else if(kind==STATS_ICON){
-    lcd.drawFastHLine(x-14,y+14,30,color);
-    for(int i=0;i<3;i++){int h=10+i*9;lcd.drawRoundRect(x-12+i*10,y+12-h,6,h,2,color);}
-  }else if(kind==GEAR){
-    lcd.drawCircle(x,y,10,color);lcd.drawCircle(x,y,4,color);
-    for(int i=0;i<8;i++){float a=i*PI/4;lcd.drawLine(x+cosf(a)*11,y+sinf(a)*11,x+cosf(a)*15,y+sinf(a)*15,color);}
-  }else if(kind==DOWNLOAD_ICON){
-    lcd.drawLine(x,y-10,x,y+7,color);lcd.drawLine(x,y+7,x-6,y+1,color);lcd.drawLine(x,y+7,x+6,y+1,color);
-    lcd.drawFastHLine(x-9,y+12,18,color);lcd.drawFastVLine(x-9,y+7,5,color);lcd.drawFastVLine(x+9,y+7,5,color);
-  }else if(kind==HEART_ICON){
-    lcd.drawCircle(x-5,y-3,5,color);lcd.drawCircle(x+5,y-3,5,color);
-    lcd.fillRect(x-9,y-1,19,6,C_PANEL);lcd.drawLine(x-10,y-1,x,y+11,color);lcd.drawLine(x+10,y-1,x,y+11,color);
-  }else if(kind==PEOPLE_ICON){
-    lcd.drawCircle(x,y-7,4,color);lcd.drawRoundRect(x-8,y,16,12,5,color);
-    lcd.drawCircle(x+11,y-5,3,color);lcd.drawLine(x+12,y+1,x+15,y+10,color);
-  }else if(kind==PRINT_ICON){
-    lcd.drawRoundRect(x-11,y-6,22,16,3,color);lcd.drawRect(x-7,y-12,14,6,color);
-    lcd.drawRect(x-7,y+3,14,11,color);lcd.drawFastHLine(x-3,y+7,6,color);
-  }else if(kind==WIFI_ICON){
-    for(int r=6;r<=16;r+=5)lcd.drawArc(x,y+8,r,r-1,135,225,color,C_PANEL,true);
-    lcd.fillCircle(x,y+8,2,color);
-  }else if(kind==WEB_ICON){
-    lcd.drawRoundRect(x-10,y-17,20,34,4,color);lcd.drawFastHLine(x-5,y+11,10,color);
-    lcd.drawCircle(x,y-3,6,color);lcd.drawLine(x-6,y-3,x+6,y-3,color);lcd.drawLine(x,y-9,x,y+3,color);
-  }
-}
-void drawHome(){
-  lcd.fillScreen(C_BG);
-  struct tm t;char tb[6]="--:--",db[28]="Waiting for time";
-  if(getLocalTime(&t,5)){strftime(tb,sizeof(tb),"%H:%M",&t);strftime(db,sizeof(db),"%A, %d %B",&t);}
-  textAt(cfgCity.substring(0,20),12,15,2,C_MUTED);
-  if(WiFi.status()==WL_CONNECTED)drawWifiGlyph(270,24,C_MUTED);
-  icon(GEAR,303,24);
-  lcd.setTextDatum(MC_DATUM);lcd.setFreeFont(&FreeSansBold24pt7b);lcd.setTextSize(2);
-  lcd.setTextColor(C_TEXT);lcd.drawString(tb,160,109);lcd.setTextSize(1);lcd.setTextFont(2);
-  lcd.setTextColor(C_MUTED);lcd.drawString(db,160,170);
-  if(weather.valid){
-    weatherIcon(weather.code,128,203);lcd.setTextDatum(ML_DATUM);lcd.drawString(temperatureLabel(weather.temp)+" C",148,203);
-  }
-  pageDots();
-}
-void drawApps(){
-  lcd.fillScreen(C_BG);appleHeader("",true);
-  const Icon icons[]={SUN,FOCUS_ICON,STATS_ICON,GEAR};
-  for(int i=0;i<4;i++){int x=10+(i%2)*155,y=43+(i/2)*91;card(x,y,145,82);icon(icons[i],x+72,y+41,C_BLUE);}
-  pageDots();
-}
-void drawWeather(){
-  lcd.fillScreen(C_BG);appleHeader(weatherDaily?"5-day forecast":"Weather",true);
-  textAt(cfgCity.substring(0,20),12,44,2,C_MUTED);
-  textAt(weather.valid?temperatureLabel(weather.temp):"--",12,62,4);
-  textAt(weather.valid?weatherText(weather.code):"Waiting for weather",72,64,2,C_MUTED);
-  textAt(weather.valid?"Feels "+temperatureLabel(weather.feels)+"  Humidity "+String(weather.humidity)+"%":"Connect to Wi-Fi",12,93,1,C_MUTED);
-  if(!weatherDaily) {
-    card(8,111,304,76);
-    textAt("NEXT 6 HOURS",18,119,1,C_MUTED);
-    for(int i=0;i<6;i++) {
-      auto& h=weather.hours[i]; int x=18+i*49;
-      textAt(h.valid?String(h.hour).substring(0,2):"--",x,133,1,C_MUTED);
-      weatherIcon(h.valid?h.code:-1,x+30,140);
-      textAt(h.valid?temperatureLabel(h.temp):"--",x,147,2);
-      textAt(h.rain>=0?String(h.rain)+"%":"--",x,170,1,C_BLUE);
-    }
-    textAt("Sun "+String(weather.sunrise)+" / "+String(weather.sunset)+"    Wind "+String(weather.wind,0)+" km/h",12,196,1,C_MUTED);
-  } else {
-    card(8,108,304,95);
-    for(int i=0;i<5;i++) {
-      auto& d=weather.days[i]; int y=112+i*18;
-      String name=i==0?"Today":String(d.date).substring(8,10)+"/"+String(d.date).substring(5,7);
-      textAt(d.valid?name:"--",18,y,1,C_MUTED);
-      weatherIcon(d.valid?d.code:-1,95,y+6);
-      textAt(d.valid?temperatureLabel(d.high)+" / "+temperatureLabel(d.low):"-- / --",122,y,1);
-      textAt(d.rain>=0?String(d.rain)+"%":"--",263,y,1,C_BLUE);
-    }
-  }
-  textAt(weatherDaily?"< Hourly":"5 days >",244,215,1,C_BLUE);
-  textAt(weather.failed?"Update failed":(weather.valid?"Open-Meteo":"Loading"),12,215,1,C_MUTED);
-  pageDots();
-}
-void drawTimer(){
-  lcd.fillScreen(C_BG);appleHeader("Focus",true);
-  uint32_t r=timerLeft();
-  for(int rr=54;rr<=57;rr++) lcd.drawCircle(160,101,rr,C_PANEL2);
-  if(timerPresetSec && r) {
-    int progress=constrain((int)(360.0f*r/timerPresetSec),1,360);
-    lcd.drawArc(160,101,57,54,0,progress,C_BLUE,C_BG,true);
-  }
-  lcd.setTextDatum(MC_DATUM);lcd.setFreeFont(&FreeSansBold18pt7b);
-  lcd.setTextColor(C_TEXT);lcd.drawString(timerText(),160,87);lcd.setTextFont(2);
-  lcd.setTextColor(C_MUTED);lcd.drawString(timerRunning?"Focus":(timerFinished?"Complete":(r==timerPresetSec?"Ready":"Paused")),160,118);
-  card(54,161,135,34,C_BLUE);card(199,161,67,34,C_PANEL);
-  lcd.setTextDatum(MC_DATUM);lcd.setTextColor(C_BG);lcd.drawString(timerRunning?"Pause":"Start",121,178);
-  lcd.setTextColor(C_MUTED);lcd.drawString("Reset",232,178);
-  const char* preset[]={"25 min","5 min","15 min"};
-  for(int i=0;i<3;i++){card(32+i*90,202,76,25);lcd.setTextFont(1);lcd.setTextColor(C_TEXT);lcd.drawString(preset[i],70+i*90,214);}
-  pageDots();
-}
-void drawMakerWorld(){
-  lcd.fillScreen(C_BG);appleHeader("MakerWorld",true);
-  textAt("NASIK",12,44,1,C_MUTED);textAt(makerStatus(),154,44,1,makerOld()?C_RED:C_MUTED);
-  const Icon names[]={PRINT_ICON,DOWNLOAD_ICON,HEART_ICON,PEOPLE_ICON};
-  int64_t values[]={maker.latest.prints,maker.latest.downloads,maker.latest.likes,maker.latest.followers};
-  for(int i=0;i<4;i++) {
-    int x=8+(i%2)*156,y=60+(i/2)*56;card(x,y,148,50);
-    icon(names[i],x+22,y+24);textAt(makerValue(values[i]),x+42,y+13,4);
-  }
-  textAt("RECENT PRINT TOTALS",12,177,1,C_MUTED);
-  if(maker.count>=2) {
-    int64_t lo=maker.samples[0].prints,hi=lo;
-    for(int i=1;i<maker.count;i++){lo=lo<maker.samples[i].prints?lo:maker.samples[i].prints;hi=hi>maker.samples[i].prints?hi:maker.samples[i].prints;}
-    int prevX=0,prevY=0;
-    for(int i=0;i<maker.count;i++) {
-      int x=14+(int)((maker.samples[i].stamp-maker.samples[0].stamp)*290/(maker.samples[maker.count-1].stamp-maker.samples[0].stamp));
-      int y=hi==lo?200:211-(int)((maker.samples[i].prints-lo)*22/(hi-lo));
-      if(i)lcd.drawLine(prevX,prevY,x,y,C_BLUE);lcd.fillCircle(x,y,2,C_BLUE);prevX=x;prevY=y;
-    }
-  } else textAt("More measurements needed",12,195,1,C_MUTED);
-  String stamp=maker.valid?String(maker.measured).substring(0,10)+" "+String(maker.measured).substring(11,16)+" UTC":"Set data URL in web setup";
-  textAt(stamp,12,219,1,C_MUTED);pageDots();
-}
+uint32_t timerLeft(){return remainingSeconds(timerRunning,timerEndsAt,timerDurationSec,millis());}
+String timerText(){uint32_t r=timerLeft();char b[10];snprintf(b,sizeof(b),"%02lu:%02lu",(unsigned long)(r/60),(unsigned long)(r%60));return b;}
+bool makerOld(){time_t now=time(nullptr);return maker.valid && (now<1700000000 || now-maker.latest.stamp>36*3600 || maker.latest.stamp>now+300);}
 
-void drawSettings(){
-  lcd.fillScreen(C_BG);appleHeader("",true);
-  const Icon icons[]={WIFI_ICON,SUN,STATS_ICON,WEB_ICON};
-  for(int i=0;i<4;i++){int x=10+(i%2)*155,y=43+(i/2)*75;card(x,y,145,66);icon(icons[i],x+72,y+29,C_BLUE);}
-  lcd.setTextDatum(MC_DATUM);lcd.setTextFont(1);lcd.setTextColor(C_MUTED);
-  lcd.drawString("Wi-Fi",82,95);lcd.drawString(String(cfgBrightness*100/255)+"%",237,95);
-  lcd.drawString("MakerWorld",82,170);lcd.drawString("Web setup",237,170);
-  String ip=setupMode?WiFi.softAPIP().toString():WiFi.localIP().toString();
-  lcd.drawString(ip,160,198);pageDots();
-}
+// Render completed 80-row strips before sending them. No white clearing flash,
+// and only 50 KiB RAM is reserved, leaving space for Wi-Fi/TLS and JSON.
+class DeviceSurface {
+  TFT_eSprite stripe;
+  bool buffered=false;
+public:
+  int top=0;
+  DeviceSurface():stripe(&lcd){}
+  void begin(){stripe.setColorDepth(16);buffered=stripe.createSprite(320,80)!=nullptr;}
+  void fillRect(int x,int y,int w,int h,uint16_t logical){
+    int lo=max(y,top),hi=min(y+h,top+80);if(hi<=lo)return;
+    uint16_t nativeColor=~logical; // Match the verified inverted CYD2USB panel.
+    if(buffered)stripe.fillRect(x,lo-top,w,hi-lo,nativeColor);
+    else lcd.fillRect(x,lo,w,hi-lo,nativeColor);
+  }
+  void drawLine(int x,int y,int x2,int y2,uint16_t color){
+    int dx=abs(x2-x),sx=x<x2?1:-1,dy=-abs(y2-y),sy=y<y2?1:-1,e=dx+dy;
+    for(;;){fillRect(x,y,1,1,color);if(x==x2 && y==y2)break;int e2=2*e;if(e2>=dy){e+=dy;x+=sx;}if(e2<=dx){e+=dx;y+=sy;}}
+  }
+  void present(){if(buffered)stripe.pushSprite(0,top);}
+} surface;
 
-void drawWebInfo(){
-  lcd.fillScreen(C_BG);appleHeader("Web setup",true);
-  textAt("Open on your phone:",24,84);
-  textAt("http://"+(setupMode?WiFi.softAPIP().toString():WiFi.localIP().toString()),24,115);
-  textAt("Tap to return",24,164,1,C_MUTED);
+void drawPage(int page){
+  DeskView v;struct tm t;char clock[6]="--:--",date[32]="Waiting for time";
+  if(getLocalTime(&t,5)){strftime(clock,sizeof(clock),"%H:%M",&t);strftime(date,sizeof(date),"%A, %d %B",&t);}
+  String countdown=timerText();String ip=setupMode?WiFi.softAPIP().toString():WiFi.localIP().toString();
+  v.clock=clock;v.date=date;v.city=cfgCity.c_str();v.countdown=countdown.c_str();v.ip=ip.c_str();
+  v.connected=WiFi.status()==WL_CONNECTED;v.daily=weatherDaily;v.running=timerRunning;v.finished=timerFinished;
+  v.oldData=makerOld();v.left=timerLeft();v.preset=timerPresetSec;v.brightness=cfgBrightness*100/255;
+  DeskRenderer<DeviceSurface> renderer(surface);
+  for(int top=0;top<240;top+=80){surface.top=top;renderer.render(page,v,weather,maker);surface.present();}
 }
+void drawHome(){drawPage(0);}
+void drawApps(){drawPage(1);}
+void drawWeather(){drawPage(2);}
+void drawTimer(){drawPage(3);}
+void drawMakerWorld(){drawPage(4);}
+void drawSettings(){drawPage(5);}
+void drawWebInfo(){drawPage(6);}
 
 void scanWifiNetworks(){
   lcd.fillScreen(C_BG);
@@ -739,6 +596,7 @@ void handleTouch(){
 
 void setup(){
   Serial.begin(115200);loadPrefs();lcd.init();lcd.setRotation(1);delay(50);lcd.invertDisplay(true);
+  surface.begin();
   pinMode(TFT_BL,OUTPUT);analogWrite(TFT_BL,cfgBrightness);
   SPI.begin(T_CLK,T_DOUT,T_DIN);ts.begin();ts.setRotation(1);
   lcd.fillScreen(C_BG);textAt("Universal Desk Dashboard",32,102);textAt("Starting...",126,130,1,C_MUTED);

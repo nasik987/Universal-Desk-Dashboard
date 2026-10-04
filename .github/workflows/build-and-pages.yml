@@ -49,6 +49,14 @@ jobs:
             -I UniversalDeskDashboard tests/data_test.cpp -o /tmp/dashboard-data-test
           /tmp/dashboard-data-test
 
+      - name: Verify production UI layouts
+        run: |
+          mkdir -p tests/previews
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -I "$HOME/Arduino/libraries/ArduinoJson/src" \
+            -I UniversalDeskDashboard tests/render_ui.cpp -o /tmp/render-ui
+          /tmp/render-ui
+
       - name: Configure TFT_eSPI for CYD 2USB
         run: |
           cp UniversalDeskDashboard/User_Setup_CYD2USB.h "$HOME/Arduino/libraries/TFT_eSPI/User_Setup.h"
