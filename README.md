@@ -2,6 +2,14 @@
 
 Firmware for the **CYD2USB ESP32-2432S028R, ST7789, 320 × 240, XPT2046 touch**. Preserves the working display inversion, touch calibration and SPI pin configuration.
 
+## Display design
+
+Inter is rasterized directly at each native pixel size with antialiasing. Rounded line icons use the same stroke weight. No text or icons are enlarged from smaller bitmaps. `DeskUI.h` is the shared production renderer, used by both the ESP32 and `tests/render_ui.cpp`; [the software preview](design/UI-preview.png) uses sample screen data. Missing-data and long-text states are checked for pixel overflow.
+
+Completed 80-row strips are transferred to the screen to avoid full-screen clearing flashes while using about 50 KiB of framebuffer memory. If that allocation fails, drawing falls back to the screen. Tests compare striped rendering to full-frame rendering.
+
+Assets can be regenerated with `python scripts/generate_assets.py --font Inter.ttf` (Pillow + CairoSVG). Font source: [Inter from Google Fonts](https://github.com/google/fonts/tree/main/ofl/inter), under SIL OFL; license in `design/Inter-OFL.txt`. Icons are custom SVG paths stored in the generator.
+
 ## Screens
 
 - Clock: large modern clock, small date, current weather. Tap the clock to open apps.
