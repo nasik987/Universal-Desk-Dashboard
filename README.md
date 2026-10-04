@@ -69,3 +69,11 @@ g++ -std=c++17 -I /path/to/ArduinoJson/src -I UniversalDeskDashboard tests/data_
 ```
 
 The hardware must still be checked after flashing, particularly swipe sensitivity, inverted panel colors and text at 320 × 240. HTTPS currently retains the existing project's `setInsecure()` transport configuration; only public weather/statistics feeds are fetched.
+
+## Location modes and larger clock
+
+Home uses native 110 px antialiased clock glyphs (previously 96 px). All 24-hour and 12-hour times are checked for clipping.
+
+Settings → Weather opens Location with Automatic / Manual controls. Automatic uses the approximate public-IP location from [IPWhois](https://ipwhois.io/documentation) for weather and local time; it is not GPS. Refresh retries detection. Manual cycles the five existing city presets; custom coordinates and a POSIX timezone remain available in web setup. Switching modes preserves manual values. Existing installations remain manual until Automatic is selected.
+
+Location lookup runs off the UI thread, refreshes every 15 minutes and retries failures after five minutes. Last successful location is cached; if no cache exists, manual settings are the fallback. Central European, London and four mainland US zones use DST rules; other zones use the current API offset, refreshed online (DST changes can be delayed by up to the refresh interval or an outage). Responses for an obsolete location selection are discarded.
