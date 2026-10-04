@@ -31,8 +31,20 @@ int main(int argc,char** argv){
       for(int top=0;top<240;top+=80){strips.top=top;striped.render(3,v,w,m);}assert(strips.pixels==raster.pixels);}
   }
   v.stopwatchMode=false;
+  const char* settingsFiles[]={"graphics","display","time","weather"};
+  v.config.nightDim=true;
+  for(int page=7;page<=10;page++){raster.overflow=0;render.render(page,v,w,m);assert(!raster.overflow);snprintf(name,sizeof(name),"tests/previews/settings-%s.ppm",settingsFiles[page-7]);raster.save(name);}
+  for(bool light:{false,true})for(int accent=0;accent<5;accent++){
+    v.config.lightTheme=light;v.config.accentIndex=accent;v.config.brightness=255;v.config.nightBrightness=20;
+    v.config.twelveHour=true;v.period="PM";v.clock="11:59";v.zone="New York";
+    for(int page=0;page<=10;page++){raster.overflow=0;render.render(page,v,w,m);assert(!raster.overflow);
+      for(int top=0;top<240;top+=80){strips.top=top;striped.render(page,v,w,m);}assert(strips.pixels==raster.pixels);}
+    v.stopwatchMode=true;render.render(3,v,w,m);assert(!raster.overflow);v.stopwatchMode=false;
+  }
+  v.config=DisplayConfig();v.period="";
   v.daily=true;render.render(2,v,w,m);assert(!raster.overflow);raster.save("tests/previews/daily.ppm");
   w=WeatherData();m=MakerData();v.clock="--:--";v.date="Waiting for time";for(int i=0;i<6;i++){raster.overflow=0;render.render(i,v,w,m);assert(!raster.overflow);}
   v.clock="23:59";v.city="A really long city name that must be clipped";render.render(0,v,w,m);assert(!raster.overflow);
-  std::cout<<"Production UI renderer: dashboard/stopwatch layouts, empty data, long text and striped rendering: PASS\n";
+  v.city="A really long city name that must be clipped";render.render(10,v,w,m);assert(!raster.overflow);
+  std::cout<<"Production UI renderer: all dashboard/settings pages, ten palettes, stopwatch, long text and striped rendering: PASS\n";
 }

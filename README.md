@@ -20,7 +20,16 @@ Assets can be regenerated with `python scripts/generate_assets.py --font Inter.t
 - Focus: 25 / 5 / 15 minute presets, start, pause and reset. Completion works even when another page is open.
 - Stopwatch: tap the top-right button on Focus to switch modes. Start, pause, resume and reset with the bottom controls. Shows hundredths, then hours for longer sessions; continues while another screen or Focus is open. Reset stops the stopwatch, and a device restart clears it.
 - MakerWorld: prints, downloads, likes and followers; graph of the last seven available print-total measurements, with actual measurement timestamp.
-- Settings: Wi-Fi selection, brightness, MakerWorld shortcut and web setup address.
+- Settings: six buttons for Wi-Fi, Graphics, Display, Time, Weather and web setup.
+
+## On-device settings
+
+- Graphics: switch Dark / Light and choose Blue, Mint, Purple, Orange or White (Gray in the light theme). Buttons and icons update immediately.
+- Display: tap either brightness slider to choose a level. Night dim is optional; tap the start/end hour buttons to cycle the schedule. A schedule can cross midnight; identical start/end hours disable the interval. Night brightness never raises the normal brightness. Until network time is available, normal brightness applies.
+- Time: choose 12 / 24 hours and cycle Central EU, UTC, London or New York. Twelve-hour clocks show AM/PM. Existing custom time zones remain active until changed.
+- Weather: cycle Brno, Praha, Ostrava, Plzeň or Bratislava and request a refresh. Existing custom locations remain active until changed. Location changes discard measurements for the previous city and request new weather in the background.
+
+Changes save automatically to Preferences and survive restart. The existing web form remains available for custom locations, time-zone rules and MakerWorld URLs. Back returns from these pages to Settings. [Settings preview](design/Settings-preview.png) uses the same renderer as the firmware.
 
 Swipe left/right between all six screens, or tap the page dots. Swipes are recognized on release so crossing a button cannot activate it. Wi-Fi keyboard remains a separate setup flow.
 
