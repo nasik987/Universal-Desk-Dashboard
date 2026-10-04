@@ -12,8 +12,6 @@
 #include <freertos/queue.h>
 #include <freertos/task.h>
 #include <TFT_eSPI.h>
-#include <Fonts/GFXFF/FreeSansBold24pt7b.h>
-#include <Fonts/GFXFF/FreeSansBold18pt7b.h>
 #include <SPI.h>
 #include <XPT2046_Touchscreen.h>
 
@@ -250,7 +248,7 @@ void hero(const String& value,int x,int y) {
   lcd.setTextDatum(TL_DATUM); lcd.setFreeFont(&FreeSansBold24pt7b);
   lcd.setTextColor(C_TEXT); lcd.drawString(value,x,y); lcd.setTextFont(2);
 }
-String degrees(float temp) { return String((int)roundf(temp))+String((char)127); } // TFT built-in degree glyph
+String temperatureLabel(float temp) { return String((int)roundf(temp))+String((char)127); } // TFT built-in degree glyph
 uint32_t timerLeft() { return remainingSeconds(timerRunning,timerEndsAt,timerDurationSec,millis()); }
 String timerText() { uint32_t r=timerLeft(); char b[10]; snprintf(b,sizeof(b),"%02lu:%02lu",(unsigned long)(r/60),(unsigned long)(r%60)); return b; }
 bool makerOld() { time_t now=time(nullptr); return maker.valid && (now<1700000000 || now-maker.latest.stamp>36*3600 || maker.latest.stamp>now+300); }
@@ -314,7 +312,7 @@ void drawHome(){
   lcd.setTextColor(C_TEXT);lcd.drawString(tb,160,109);lcd.setTextSize(1);lcd.setTextFont(2);
   lcd.setTextColor(C_MUTED);lcd.drawString(db,160,170);
   if(weather.valid){
-    weatherIcon(weather.code,128,203);lcd.setTextDatum(ML_DATUM);lcd.drawString(degrees(weather.temp)+" C",148,203);
+    weatherIcon(weather.code,128,203);lcd.setTextDatum(ML_DATUM);lcd.drawString(temperatureLabel(weather.temp)+" C",148,203);
   }
   pageDots();
 }
@@ -327,9 +325,9 @@ void drawApps(){
 void drawWeather(){
   lcd.fillScreen(C_BG);appleHeader(weatherDaily?"5-day forecast":"Weather",true);
   textAt(cfgCity.substring(0,20),12,44,2,C_MUTED);
-  textAt(weather.valid?degrees(weather.temp):"--",12,62,4);
+  textAt(weather.valid?temperatureLabel(weather.temp):"--",12,62,4);
   textAt(weather.valid?weatherText(weather.code):"Waiting for weather",72,64,2,C_MUTED);
-  textAt(weather.valid?"Feels "+degrees(weather.feels)+"  Humidity "+String(weather.humidity)+"%":"Connect to Wi-Fi",12,93,1,C_MUTED);
+  textAt(weather.valid?"Feels "+temperatureLabel(weather.feels)+"  Humidity "+String(weather.humidity)+"%":"Connect to Wi-Fi",12,93,1,C_MUTED);
   if(!weatherDaily) {
     card(8,111,304,76);
     textAt("NEXT 6 HOURS",18,119,1,C_MUTED);
@@ -337,7 +335,7 @@ void drawWeather(){
       auto& h=weather.hours[i]; int x=18+i*49;
       textAt(h.valid?String(h.hour).substring(0,2):"--",x,133,1,C_MUTED);
       weatherIcon(h.valid?h.code:-1,x+30,140);
-      textAt(h.valid?degrees(h.temp):"--",x,147,2);
+      textAt(h.valid?temperatureLabel(h.temp):"--",x,147,2);
       textAt(h.rain>=0?String(h.rain)+"%":"--",x,170,1,C_BLUE);
     }
     textAt("Sun "+String(weather.sunrise)+" / "+String(weather.sunset)+"    Wind "+String(weather.wind,0)+" km/h",12,196,1,C_MUTED);
@@ -348,7 +346,7 @@ void drawWeather(){
       String name=i==0?"Today":String(d.date).substring(8,10)+"/"+String(d.date).substring(5,7);
       textAt(d.valid?name:"--",18,y,1,C_MUTED);
       weatherIcon(d.valid?d.code:-1,95,y+6);
-      textAt(d.valid?degrees(d.high)+" / "+degrees(d.low):"-- / --",122,y,1);
+      textAt(d.valid?temperatureLabel(d.high)+" / "+temperatureLabel(d.low):"-- / --",122,y,1);
       textAt(d.rain>=0?String(d.rain)+"%":"--",263,y,1,C_BLUE);
     }
   }
@@ -759,7 +757,6 @@ void loop(){
   struct tm t;
   if(currentScreen==HOME && getLocalTime(&t,5) && t.tm_min!=lastMinuteDrawn){lastMinuteDrawn=t.tm_min;changed=true;}
   if(currentScreen==TIMER && timerRunning && millis()-lastDraw>=1000)changed=true;
-  if(currentScreen==HOME && timerRunning && millis()-lastDraw>=1000)changed=true;
   if(changed && currentScreen<=SETTINGS)redraw();
   delay(10);
 }
