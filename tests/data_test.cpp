@@ -1,10 +1,20 @@
 #include "DashboardData.h"
+#include "Stopwatch.h"
 #include <cassert>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 static JsonDocument json(const char* value) {JsonDocument d; assert(!deserializeJson(d,value));return d;}
 int main(int argc,char** argv){
+  Stopwatch watch;
+  assert(!watch.running() && watch.elapsed(500)==0);
+  watch.start(1000);watch.start(1200);assert(watch.elapsed(2500)==1500);
+  watch.pause(2500);assert(!watch.running() && watch.elapsed(9000)==1500);
+  watch.start(10000);watch.tick(11000);assert(watch.elapsed(11500)==3000);
+  watch.reset(12000);assert(!watch.running() && watch.elapsed(13000)==0);
+  watch.start(0xfffffff0);watch.tick(0x10);assert(watch.elapsed(0x20)==48);
+  watch.tick(0xfffffff0);watch.tick(0x10);assert(watch.elapsed(0x10)==uint64_t(0x100000020));
+  watch.pause(0x20);assert(watch.elapsed(0x100)==uint64_t(0x100000030));
   assert(utcEpoch("2026-10-04T01:39:00+02:00")==utcEpoch("2026-10-03T23:39:00Z"));
   assert(utcEpoch("1970-01-01T00:00:01Z")==1);
   assert(!utcEpoch("2026-02-30T01:00:00Z"));assert(!utcEpoch("2026-10-03T23:39:00"));
@@ -24,5 +34,5 @@ int main(int argc,char** argv){
   assert(!strcmp(weather.sunrise,"07:01") && weather.days[0].valid && !weather.days[1].valid);
   assert(!parseWeather(bad,weather,101) && weather.updatedAt==100);
   if(argc>1){std::ifstream f(argv[1]);std::stringstream body;body<<f.rdbuf();JsonDocument real;assert(!deserializeJson(real,body.str()));assert(parseMaker(real,m,200));assert(m.count==7 && m.latest.stamp==utcEpoch("2026-09-23T18:21:51+00:00"));for(int i=1;i<m.count;i++)assert(m.samples[i].stamp>m.samples[i-1].stamp);}
-  std::cout<<"Data parsing, missing/stale data, hourly rollover, timer rollover: PASS\n";
+  std::cout<<"Data parsing, missing/stale data, hourly/timer rollover, stopwatch pause/resume/reset and rollover: PASS\n";
 }

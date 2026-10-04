@@ -18,6 +18,7 @@ Assets can be regenerated with `python scripts/generate_assets.py --font Inter.t
 - Apps: four large line icons for weather, Focus, MakerWorld and settings.
 - Weather: next six hourly forecasts, rain probability, five-day forecast, sunrise/sunset and wind. Tap the bottom-right switch for hourly / daily view.
 - Focus: 25 / 5 / 15 minute presets, start, pause and reset. Completion works even when another page is open.
+- Stopwatch: tap the top-right button on Focus to switch modes. Start, pause, resume and reset with the bottom controls. Shows hundredths, then hours for longer sessions; continues while another screen or Focus is open. Reset stops the stopwatch, and a device restart clears it.
 - MakerWorld: prints, downloads, likes and followers; graph of the last seven available print-total measurements, with actual measurement timestamp.
 - Settings: Wi-Fi selection, brightness, MakerWorld shortcut and web setup address.
 

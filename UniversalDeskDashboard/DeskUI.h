@@ -1,6 +1,7 @@
 #pragma once
 #include "DeskAssets.h"
 #include "DeskTheme.h"
+#include "StopwatchIcon.h"
 #include "DashboardData.h"
 #include <math.h>
 #include <string.h>
@@ -11,6 +12,8 @@ struct DeskView {
   const char* countdown="25:00"; const char* ip="";
   bool connected=false, daily=false, running=false, finished=false, oldData=false;
   uint32_t left=1500,preset=1500; int brightness=70;
+  bool stopwatchMode=false, stopwatchRunning=false;
+  uint64_t stopwatchElapsed=0;
 };
 
 // Shared production renderer: native previews and the ESP32 use these same pixels.
@@ -135,13 +138,26 @@ public:
       text(v.daily?"Hourly  ›":"5 days  ›",253,222,FontSmall,blue,paper);
       if(w.failed)text("Update failed",18,222,FontSmall,muted,paper);
     }else if(page==3){
-      header("Focus");center(v.countdown,160,121,FontFocus,ink,paper);
+      header(v.stopwatchMode?"Stopwatch":"Focus");
+      tile(274,6,36,32,10);icon(v.stopwatchMode?IconHourglass24:IconStopwatch24,280,10,blue,panel);
+      if(v.stopwatchMode){
+        uint64_t seconds=v.stopwatchElapsed/1000,hours=seconds/3600;
+        if(hours)snprintf(b,sizeof(b),"%llu:%02u:%02u",(unsigned long long)hours,(unsigned)(seconds/60%60),(unsigned)(seconds%60));
+        else snprintf(b,sizeof(b),"%02u:%02u",(unsigned)(seconds/60),(unsigned)(seconds%60));
+        center(b,160,121,width(b,FontFocus)<=284?FontFocus:FontMetric,ink,paper);
+        snprintf(b,sizeof(b),".%02u",(unsigned)(v.stopwatchElapsed/10%100));center(b,160,147,FontTitle,muted,paper);
+        round(54,161,135,34,16,blue,paper);tile(199,161,67,34,16);
+        icon(v.stopwatchRunning?IconPause24:IconPlay24,109,166,ink,blue);icon(IconReset24,220,166,muted,panel);
+        center(v.stopwatchRunning?"Running":(v.stopwatchElapsed?"Paused":"Ready"),160,219,FontBody,muted,paper);
+      }else{
+      center(v.countdown,160,121,FontFocus,ink,paper);
       center(v.running?"Focus time":(v.finished?"Complete":(v.left==v.preset?"Ready":"Paused")),160,146,FontBody,muted,paper);
       round(70,151,180,3,1,line,paper);if(v.preset && v.left){int n=(int)(180.0*v.left/v.preset);if(n>180)n=180;if(n<3)n=3;round(70,151,n,3,1,blue,line);}
-      round(54,161,135,34,16,blue,paper);round(199,161,67,34,16,panel,paper);
+      round(54,161,135,34,16,blue,paper);tile(199,161,67,34,16);
       icon(v.running?IconPause24:IconPlay24,109,166,ink,blue);icon(IconReset24,220,166,muted,panel);
       const char* labels[]={"25 min","5 min","15 min"};int durations[]={1500,300,900};
       for(int i=0;i<3;i++){int x=32+i*90;round(x,202,76,25,12,panel,paper);center(labels[i],x+38,219,FontSmall,v.preset==(uint32_t)durations[i]?blue:muted,panel);}
+      }
     }else if(page==4){
       header("MakerWorld");text("Nasik",18,50,FontSmall,muted,paper);
       text(!m.valid?(m.failed?"Source unavailable":"Waiting for data"):(v.oldData?"Old data":(m.failed?"Update failed":"Latest measurement")),194,50,FontSmall,muted,paper);

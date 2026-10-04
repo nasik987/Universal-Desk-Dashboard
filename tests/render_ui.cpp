@@ -23,8 +23,16 @@ int main(int argc,char** argv){
   };
   Stripes strips;DeskRenderer<Stripes> striped(strips);
   for(int page=0;page<6;page++){render.render(page,v,w,m);for(int top=0;top<240;top+=80){strips.top=top;striped.render(page,v,w,m);}assert(strips.pixels==raster.pixels);}
+  v.stopwatchMode=true;v.stopwatchRunning=true;v.stopwatchElapsed=83420;
+  render.render(3,v,w,m);assert(!raster.overflow);raster.save("tests/previews/stopwatch.ppm");
+  for(uint64_t elapsed:{uint64_t(0),uint64_t(3599999),uint64_t(3600000),uint64_t(36000000000000)}){
+    v.stopwatchElapsed=elapsed;
+    for(bool running:{false,true}){v.stopwatchRunning=running;raster.overflow=0;render.render(3,v,w,m);assert(!raster.overflow);
+      for(int top=0;top<240;top+=80){strips.top=top;striped.render(3,v,w,m);}assert(strips.pixels==raster.pixels);}
+  }
+  v.stopwatchMode=false;
   v.daily=true;render.render(2,v,w,m);assert(!raster.overflow);raster.save("tests/previews/daily.ppm");
   w=WeatherData();m=MakerData();v.clock="--:--";v.date="Waiting for time";for(int i=0;i<6;i++){raster.overflow=0;render.render(i,v,w,m);assert(!raster.overflow);}
   v.clock="23:59";v.city="A really long city name that must be clipped";render.render(0,v,w,m);assert(!raster.overflow);
-  std::cout<<"Production UI renderer: seven 320x240 previews, empty data and long text: PASS\n";
+  std::cout<<"Production UI renderer: dashboard/stopwatch layouts, empty data, long text and striped rendering: PASS\n";
 }
