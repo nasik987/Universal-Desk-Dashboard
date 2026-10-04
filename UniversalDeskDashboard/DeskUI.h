@@ -1,5 +1,6 @@
 #pragma once
 #include "DeskAssets.h"
+#include "DeskTheme.h"
 #include "DashboardData.h"
 #include <math.h>
 #include <string.h>
@@ -16,13 +17,12 @@ struct DeskView {
 // Coordinates are 320 x 240. Text and icons are native-size alpha masks, never enlarged.
 template<class Surface> class DeskRenderer {
   Surface& s;
-  static uint16_t rgb(unsigned r,unsigned g,unsigned b){return ((r>>3)<<11)|((g>>2)<<5)|(b>>3);}
   static uint16_t mix(uint8_t a,uint16_t f,uint16_t b){
     return ((((f>>11)*a+(b>>11)*(255-a)+127)/255)<<11)|
       (((((f>>5)&63)*a+((b>>5)&63)*(255-a)+127)/255)<<5)|
       (((f&31)*a+(b&31)*(255-a)+127)/255);
   }
-  uint16_t paper=rgb(255,255,255),panel=rgb(244,246,249),ink=rgb(25,29,36),muted=rgb(130,138,149),blue=rgb(32,117,242),line=rgb(229,233,239);
+  uint16_t paper=DeskTheme::background,panel=DeskTheme::panel,ink=DeskTheme::text,muted=DeskTheme::muted,blue=DeskTheme::accent,line=DeskTheme::line;
   static unsigned codepoint(const char*& p){
     unsigned c=(uint8_t)*p++;
     if(c>=0xC0 && c<0xE0 && *p){c=((c&31)<<6)|((uint8_t)*p++&63);}
@@ -135,7 +135,7 @@ public:
       center(v.running?"Focus time":(v.finished?"Complete":(v.left==v.preset?"Ready":"Paused")),160,146,FontBody,muted,paper);
       round(70,151,180,3,1,line,paper);if(v.preset && v.left){int n=(int)(180.0*v.left/v.preset);if(n>180)n=180;if(n<3)n=3;round(70,151,n,3,1,blue,line);}
       round(54,161,135,34,16,blue,paper);round(199,161,67,34,16,panel,paper);
-      icon(v.running?IconPause24:IconPlay24,109,166,paper,blue);icon(IconReset24,220,166,muted,panel);
+      icon(v.running?IconPause24:IconPlay24,109,166,ink,blue);icon(IconReset24,220,166,muted,panel);
       const char* labels[]={"25 min","5 min","15 min"};int durations[]={1500,300,900};
       for(int i=0;i<3;i++){int x=32+i*90;round(x,202,76,25,12,panel,paper);center(labels[i],x+38,219,FontSmall,v.preset==(uint32_t)durations[i]?blue:muted,panel);}
     }else if(page==4){

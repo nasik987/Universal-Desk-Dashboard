@@ -4,6 +4,8 @@ Firmware for the **CYD2USB ESP32-2432S028R, ST7789, 320 × 240, XPT2046 touch**.
 
 ## Display design
 
+The default theme uses near-black backgrounds, charcoal cards, soft-white text and blue accents. `DeskTheme.h` shares logical RGB565 colors between the main renderer, Wi-Fi setup screens and startup messages. The display's verified inversion is preserved; colors are complemented once at the hardware boundary.
+
 Inter is rasterized directly at each native pixel size with antialiasing. Rounded line icons use the same stroke weight. No text or icons are enlarged from smaller bitmaps. `DeskUI.h` is the shared production renderer, used by both the ESP32 and `tests/render_ui.cpp`; [the software preview](design/UI-preview.png) uses sample screen data. Missing-data and long-text states are checked for pixel overflow.
 
 Completed 80-row strips are transferred to the screen to avoid full-screen clearing flashes while using about 50 KiB of framebuffer memory. If that allocation fails, drawing falls back to the screen. Tests compare striped rendering to full-frame rendering.

@@ -75,10 +75,10 @@ int lastMinuteDrawn = -1;
 
 // Preserve the verified ST7789 inversion setting used on this CYD2USB.
 // This panel displays the complement of RGB565; neutral cards stay neutral.
-static const uint16_t C_BG=0x0000, C_PANEL=0x0841, C_PANEL2=0x1082;
-static const uint16_t C_TEXT=0xE71C, C_MUTED=0x8C70, C_CYAN=0xFC20;
-static const uint16_t C_GREEN=0xFC20, C_YELLOW=0x0BFF;
-static const uint16_t C_BLUE=0xFC20, C_RED=0x07DF;
+static const uint16_t C_BG=DeskTheme::native(DeskTheme::background), C_PANEL=DeskTheme::native(DeskTheme::panel), C_PANEL2=DeskTheme::native(DeskTheme::line);
+static const uint16_t C_TEXT=DeskTheme::native(DeskTheme::text), C_MUTED=DeskTheme::native(DeskTheme::muted), C_CYAN=DeskTheme::native(DeskTheme::accent);
+static const uint16_t C_GREEN=DeskTheme::native(DeskTheme::success), C_YELLOW=DeskTheme::native(DeskTheme::warning);
+static const uint16_t C_BLUE=DeskTheme::native(DeskTheme::accent), C_RED=DeskTheme::native(DeskTheme::error);
 
 void drawTimer();
 
@@ -112,7 +112,7 @@ String esc(String s){
 String setupPage(){
   String ip=setupMode?WiFi.softAPIP().toString():WiFi.localIP().toString();
   String h="<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'><title>Desk Dashboard</title>";
-  h+="<style>body{font-family:system-ui;background:#f5f5f7;color:#1d1d1f;padding:24px}.w{max-width:620px;margin:auto}.c{background:#fff;border:1px solid #e5e5ea;border-radius:18px;padding:20px;margin:0 0 16px}input{width:100%;box-sizing:border-box;padding:12px;border-radius:10px;border:1px solid #d1d1d6;background:#f9f9fb;color:#1d1d1f}label{display:block;margin:12px 0 5px}button{width:100%;padding:13px;border:0;border-radius:11px;background:#007aff;color:white;font-weight:700;margin-top:16px}</style></head><body><div class='w'>";
+  h+="<style>body{color-scheme:dark;font-family:system-ui;background:#101114;color:#f4f5f7;padding:24px}.w{max-width:620px;margin:auto}.c{background:#202228;border:1px solid #343841;border-radius:18px;padding:20px;margin:0 0 16px}input{width:100%;box-sizing:border-box;padding:12px;border-radius:10px;border:1px solid #343841;background:#101114;color:#f4f5f7}label{display:block;margin:12px 0 5px}button{width:100%;padding:13px;border:0;border-radius:11px;background:#4b91ff;color:white;font-weight:700;margin-top:16px}</style></head><body><div class='w'>";
   h+="<div class='c'><h1>Universal Desk Dashboard</h1><p>Device IP: "+ip+"</p></div><form method='POST' action='/save'>";
   h+="<div class='c'><h2>Wi-Fi</h2><label>SSID</label><input name='ssid' value='"+esc(cfgSsid)+"'><label>Password</label><input type='password' name='pass' value='"+esc(cfgPass)+"'></div>";
   h+="<div class='c'><h2>Location & time</h2><label>City</label><input name='city' value='"+esc(cfgCity)+"'><label>Latitude</label><input name='lat' value='"+String(cfgLat,5)+"'><label>Longitude</label><input name='lon' value='"+String(cfgLon,5)+"'><label>POSIX timezone</label><input name='tz' value='"+esc(cfgTZ)+"'></div>";
@@ -242,7 +242,7 @@ public:
   void begin(){stripe.setColorDepth(16);buffered=stripe.createSprite(320,80)!=nullptr;}
   void fillRect(int x,int y,int w,int h,uint16_t logical){
     int lo=max(y,top),hi=min(y+h,top+80);if(hi<=lo)return;
-    uint16_t nativeColor=~logical; // Match the verified inverted CYD2USB panel.
+    uint16_t nativeColor=DeskTheme::native(logical); // Match the verified inverted CYD2USB panel.
     if(buffered)stripe.fillRect(x,lo-top,w,hi-lo,nativeColor);
     else lcd.fillRect(x,lo,w,hi-lo,nativeColor);
   }
@@ -361,7 +361,7 @@ void drawWifiKeyboard(){
     int len=strlen(row);
     for(int i=0;i<len;i++){
       int bx=i*29+2, by=78+r*30;
-      lcd.fillRoundRect(bx,by,26,26,6,0x2945);
+      lcd.fillRoundRect(bx,by,26,26,6,C_PANEL);
       char ch=row[i];
       if(keyboardShift && !keyboardNumbers) ch=toupper(ch);
       lcd.setTextColor(C_TEXT);
@@ -369,7 +369,7 @@ void drawWifiKeyboard(){
     }
   }
 
-  lcd.fillRoundRect(44,168,232,25,8,0x2945);
+  lcd.fillRoundRect(44,168,232,25,8,C_PANEL);
   lcd.setTextColor(C_TEXT);
   lcd.drawString("space",160,181);
 
