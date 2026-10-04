@@ -24,7 +24,7 @@ def array(name,b):
     for i in range(0,len(b),32):out.append(','.join(map(str,b[i:i+32]))+',')
     out.append('};')
 
-for name,size,weight,chars in [('Small',11,450,''),('Body',14,450,''),('Title',18,600,''),('Metric',24,600,'0123456789.-kM%°'),('Focus',64,550,'0123456789:-'),('Clock',96,550,'0123456789:-')]:
+for name,size,weight,chars in [('Small',11,450,''),('Body',14,450,''),('Title',18,600,''),('Metric',24,600,'0123456789.-kM%°'),('Focus',64,550,'0123456789:-'),('Clock',110,550,'0123456789:-')]:
     if not chars:chars=''.join(map(chr,range(32,127)))+'°·›áčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ'
     font=ImageFont.truetype(args.font,size*4)
     axes=font.get_variation_axes();font.set_variation_by_axes([min(max(24,a['minimum']),a['maximum']) if a['name']==b'Optical size' else weight for a in axes])

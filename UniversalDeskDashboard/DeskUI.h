@@ -16,6 +16,7 @@ struct DeskView {
   bool stopwatchMode=false, stopwatchRunning=false;
   uint64_t stopwatchElapsed=0;
   DisplayConfig config;
+  bool automaticLocation=false;const char* locationStatus="Manual city";
   const char* period="";const char* zone="Central EU";
   float latitude=49.1951f,longitude=16.6068f;
 };
@@ -117,7 +118,7 @@ public:
       text(v.city,20,30,FontBody,muted,paper,240);
       if(v.connected)icon(IconWifi24,254,12,muted,paper);
       icon(IconSettings24,286,12,muted,paper);
-      center(v.clock,160,148,FontClock,ink,paper);
+      center(v.clock,160,154,FontClock,ink,paper);
       center(v.date,160,180,FontBody,muted,paper);
       if(*v.period)text(v.period,280,180,FontSmall,muted,paper);
       if(w.valid){temp(b,sizeof(b),true,w.temp);int tw=width(b,FontBody);int x=160-(tw+36)/2;
@@ -208,10 +209,11 @@ public:
     }else if(page==9){
       header("Time");tile(16,48,288,48,12);text("Clock format",28,77,FontBody,ink,panel);option(178,53,58,38,"12 h",v.config.twelveHour);option(242,53,58,38,"24 h",!v.config.twelveHour);
       tile(16,108,288,50,12);text("Time zone",28,139,FontBody,ink,panel);text(v.zone,161,139,FontBody,blue,panel,296);
-      center("Tap zone to cycle",160,182,FontSmall,muted,paper);center(v.clock,160,219,FontTitle,ink,paper);text(v.period,203,219,FontSmall,muted,paper);
+      center(v.automaticLocation?"Auto location - tap zone for manual":"Tap zone to cycle",160,182,FontSmall,muted,paper);center(v.clock,160,219,FontTitle,ink,paper);text(v.period,203,219,FontSmall,muted,paper);
     }else if(page==10){
-      header("Weather");tile(16,51,288,47,12);text("City",28,81,FontBody,ink,panel);text(v.city,148,81,FontTitle,blue,panel,296);
-      center("Tap city to choose",160,123,FontSmall,muted,paper);snprintf(b,sizeof(b),"%.4f, %.4f",v.latitude,v.longitude);center(b,160,161,FontBody,muted,paper);
+      header("Location");option(16,48,140,36,"Automatic",v.automaticLocation);option(164,48,140,36,"Manual",!v.automaticLocation);
+      tile(16,94,288,43,12);text("City",28,122,FontBody,ink,panel);text(v.city,100,122,FontTitle,blue,panel,296);
+      center(v.locationStatus,160,157,FontSmall,muted,paper);snprintf(b,sizeof(b),"%.4f, %.4f",v.latitude,v.longitude);center(b,160,179,FontSmall,muted,paper);
       tile(16,191,288,35,12);icon(IconReset24,89,196,blue,panel);text("Refresh",127,214,FontBody,ink,panel);
     }
     if(page==6){header("Web setup");center("Open on your phone",160,100,FontBody,muted,paper);center(v.ip,160,138,FontTitle,ink,paper);center("Tap to return",160,192,FontSmall,muted,paper);}

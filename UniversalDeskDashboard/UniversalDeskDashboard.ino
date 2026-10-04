@@ -10,6 +10,7 @@
 #include "DashboardData.h"
 #include "DeskUI.h"
 #include "Stopwatch.h"
+#include "LocationSettings.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
@@ -58,7 +59,11 @@ portMUX_TYPE locationMux=portMUX_INITIALIZER_UNLOCKED;
 uint32_t locationRevision=0;
 struct WeatherUpdate {WeatherData data;uint32_t location;};
 bool weatherDaily=false;
-QueueHandle_t weatherQueue, makerQueue;
+QueueHandle_t weatherQueue, makerQueue, locationQueue;
+bool cfgAutoLocation=false,requestLocation=true,locationFailed=false;
+AutoLocation autoLocation;
+struct LocationUpdate {AutoLocation data;uint32_t revision;bool ok;};
+String activeCity,activeTZ;float activeLat=49.1951f,activeLon=16.6068f;
 TaskHandle_t networkTaskHandle=nullptr;
 float cfgLat = 49.1951;
 float cfgLon = 16.6068;
@@ -111,6 +116,9 @@ void loadPrefs(){
   cfgCustomLink=prefs.getString("link","https://example.com");
   cfgLat=prefs.getFloat("lat",49.1951f); cfgLon=prefs.getFloat("lon",16.6068f);
   cfgMakerURL=prefs.getString("makerurl",cfgMakerURL);
+  cfgAutoLocation=prefs.getBool("autoloc",false);
+  String cached=prefs.getString("location","");JsonDocument locationDoc;
+  if(cached.length()&&!deserializeJson(locationDoc,cached))parseAutoLocation(locationDoc.as<JsonVariantConst>(),autoLocation);
   cfgBrightness=prefs.getUChar("brightness",180);
   displayConfig.nightBrightness=prefs.getUChar("nightlevel",40);
   displayConfig.nightStart=prefs.getUChar("nightstart",22);displayConfig.nightEnd=prefs.getUChar("nightend",7);
@@ -123,12 +131,33 @@ void loadPrefs(){
 void savePrefs(){
   prefs.begin("desk-dash",false);
   prefs.putString("ssid",cfgSsid); prefs.putString("pass",cfgPass); prefs.putString("city",cfgCity);
+  prefs.putBool("autoloc",cfgAutoLocation);
   prefs.putString("tz",cfgTZ); prefs.putString("link",cfgCustomLink);
   prefs.putFloat("lat",cfgLat); prefs.putFloat("lon",cfgLon);
   prefs.putString("makerurl",cfgMakerURL); prefs.putUChar("brightness",cfgBrightness);
   prefs.putUChar("nightlevel",displayConfig.nightBrightness);prefs.putUChar("nightstart",displayConfig.nightStart);prefs.putUChar("nightend",displayConfig.nightEnd);
   prefs.putBool("nightdim",displayConfig.nightDim);prefs.putBool("lighttheme",displayConfig.lightTheme);prefs.putUChar("accent",displayConfig.accentIndex);prefs.putBool("twelvehour",displayConfig.twelveHour);
   prefs.end();
+}
+
+void applyLocation(bool automatic,bool request=false){
+  bool useAuto=automatic&&autoLocation.valid;
+  activeCity=useAuto?String(autoLocation.city):cfgCity;activeTZ=useAuto?String(autoLocation.rule):cfgTZ;
+  portENTER_CRITICAL(&locationMux);
+  cfgAutoLocation=automatic;requestLocation=request&&automatic;
+  activeLat=useAuto?autoLocation.lat:cfgLat;activeLon=useAuto?autoLocation.lon:cfgLon;++locationRevision;
+  portEXIT_CRITICAL(&locationMux);
+  weather=WeatherData();configTzTime(activeTZ.c_str(),"pool.ntp.org","time.nist.gov");lastMinuteDrawn=-1;applyBrightness(true);
+  if(networkTaskHandle)xTaskNotifyGive(networkTaskHandle);
+}
+void setLocationMode(bool automatic){
+  locationFailed=false;applyLocation(automatic,true);savePrefs();
+}
+void cacheLocation(){
+  JsonDocument doc;doc["success"]=true;doc["city"]=autoLocation.city;doc["latitude"]=autoLocation.lat;doc["longitude"]=autoLocation.lon;doc["timezone"]["id"]=autoLocation.zone;
+  // Persist the original offset; known zones use complete DST rules on restart.
+  doc["timezone"]["offset"]=autoLocation.offset;
+  String value;serializeJson(doc,value);prefs.begin("desk-dash",false);prefs.putString("location",value);prefs.end();
 }
 
 String esc(String s){
@@ -142,10 +171,10 @@ String esc(String s){
 String setupPage(){
   String ip=setupMode?WiFi.softAPIP().toString():WiFi.localIP().toString();
   String h="<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'><title>Desk Dashboard</title>";
-  h+="<style>body{color-scheme:dark;font-family:system-ui;background:#101114;color:#f4f5f7;padding:24px}.w{max-width:620px;margin:auto}.c{background:#202228;border:1px solid #343841;border-radius:18px;padding:20px;margin:0 0 16px}input{width:100%;box-sizing:border-box;padding:12px;border-radius:10px;border:1px solid #343841;background:#101114;color:#f4f5f7}label{display:block;margin:12px 0 5px}button{width:100%;padding:13px;border:0;border-radius:11px;background:#4b91ff;color:white;font-weight:700;margin-top:16px}</style></head><body><div class='w'>";
+  h+="<style>body{color-scheme:dark;font-family:system-ui;background:#101114;color:#f4f5f7;padding:24px}.w{max-width:620px;margin:auto}.c{background:#202228;border:1px solid #343841;border-radius:18px;padding:20px;margin:0 0 16px}select,input{width:100%;box-sizing:border-box;padding:12px;border-radius:10px;border:1px solid #343841;background:#101114;color:#f4f5f7}label{display:block;margin:12px 0 5px}button{width:100%;padding:13px;border:0;border-radius:11px;background:#4b91ff;color:white;font-weight:700;margin-top:16px}</style></head><body><div class='w'>";
   h+="<div class='c'><h1>Universal Desk Dashboard</h1><p>Device IP: "+ip+"</p></div><form method='POST' action='/save'>";
   h+="<div class='c'><h2>Wi-Fi</h2><label>SSID</label><input name='ssid' value='"+esc(cfgSsid)+"'><label>Password</label><input type='password' name='pass' value='"+esc(cfgPass)+"'></div>";
-  h+="<div class='c'><h2>Location & time</h2><label>City</label><input name='city' value='"+esc(cfgCity)+"'><label>Latitude</label><input name='lat' value='"+String(cfgLat,5)+"'><label>Longitude</label><input name='lon' value='"+String(cfgLon,5)+"'><label>POSIX timezone</label><input name='tz' value='"+esc(cfgTZ)+"'></div>";
+  h+="<div class='c'><h2>Location & time</h2><label>Location mode</label><select name='autoloc'><option value='0'"+String(cfgAutoLocation?"":" selected")+">Manual</option><option value='1'"+String(cfgAutoLocation?" selected":"")+">Automatic (internet location)</option></select><p>Automatic uses approximate IP location for weather and time. Manual values are kept separately.</p><label>Manual city</label><input name='city' value='"+esc(cfgCity)+"'><label>Latitude</label><input name='lat' value='"+String(cfgLat,5)+"'><label>Longitude</label><input name='lon' value='"+String(cfgLon,5)+"'><label>POSIX timezone</label><input name='tz' value='"+esc(cfgTZ)+"'></div>";
   h+="<div class='c'><h2>MakerWorld</h2><p>Public HTTPS JSON endpoint. Old measurements are labelled on screen.</p><label>Stats URL</label><input name='makerurl' value='"+esc(cfgMakerURL)+"'><label>Brightness (20-255)</label><input type='number' min='20' max='255' name='brightness' value='"+String(cfgBrightness)+"'></div>";
   h+="<div class='c'><h2>Custom</h2><label>Custom link</label><input name='link' value='"+esc(cfgCustomLink)+"'><button type='submit'>Save & restart</button></div></form></div></body></html>";
   return h;
@@ -154,6 +183,11 @@ String setupPage(){
 void startWebServer(){
   server.on("/",HTTP_GET,[]{server.send(200,"text/html; charset=utf-8",setupPage());});
   server.on("/save",HTTP_POST,[]{
+    if(server.hasArg("lat")&&server.hasArg("lon")){
+      char *latEnd,*lonEnd;String latText=server.arg("lat"),lonText=server.arg("lon");float lat=strtof(latText.c_str(),&latEnd),lon=strtof(lonText.c_str(),&lonEnd);
+      if(latEnd==latText.c_str()||*latEnd||lonEnd==lonText.c_str()||*lonEnd||!validCoordinates(lat,lon)){server.send(400,"text/plain","Enter valid latitude (-90..90) and longitude (-180..180).");return;}
+    }
+    if(server.hasArg("autoloc")){bool automatic=server.arg("autoloc")=="1";portENTER_CRITICAL(&locationMux);cfgAutoLocation=automatic;portEXIT_CRITICAL(&locationMux);}
     if(server.hasArg("ssid"))cfgSsid=server.arg("ssid"); if(server.hasArg("pass"))cfgPass=server.arg("pass");
     if(server.hasArg("city"))cfgCity=server.arg("city"); if(server.hasArg("lat"))cfgLat=server.arg("lat").toFloat();
     if(server.hasArg("lon"))cfgLon=server.arg("lon").toFloat(); if(server.hasArg("tz"))cfgTZ=server.arg("tz");
@@ -209,14 +243,21 @@ bool fetchJSON(const String& url, JsonDocument& doc) {
 void networkTask(void*) {
   WeatherData cachedWeather; MakerData cachedMaker;
   const String makerURL=cfgMakerURL;uint32_t cachedLocation=0xffffffff;
-  uint32_t nextWeather=0, nextMaker=0;
+  uint32_t nextWeather=0, nextMaker=0,nextLocation=0;
   bool first=true;
   for(;;) {
     uint32_t now=millis();
     if(WiFi.status()==WL_CONNECTED) {
+      bool automatic,requested;uint32_t geoRevision;
+      portENTER_CRITICAL(&locationMux);automatic=cfgAutoLocation;requested=requestLocation;requestLocation=false;geoRevision=locationRevision;portEXIT_CRITICAL(&locationMux);
+      if(automatic&&(requested||(int32_t)(now-nextLocation)>=0)){
+        JsonDocument doc;LocationUpdate update{};update.revision=geoRevision;
+        update.ok=fetchJSON("https://ipwho.is/",doc)&&parseAutoLocation(doc.as<JsonVariantConst>(),update.data);
+        xQueueOverwrite(locationQueue,&update);nextLocation=millis()+(update.ok?900000UL:300000UL);
+      }
       if(first || (int32_t)(now-nextWeather)>=0) {
         float lat,lon;uint32_t revision;
-        portENTER_CRITICAL(&locationMux);lat=cfgLat;lon=cfgLon;revision=locationRevision;portEXIT_CRITICAL(&locationMux);
+        portENTER_CRITICAL(&locationMux);lat=activeLat;lon=activeLon;revision=locationRevision;portEXIT_CRITICAL(&locationMux);
         if(revision!=cachedLocation){cachedWeather=WeatherData();cachedLocation=revision;}
         JsonDocument doc;
         String url="https://api.open-meteo.com/v1/forecast?latitude="+String(lat,5)+"&longitude="+String(lon,5)+"&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m&hourly=temperature_2m,precipitation_probability,weather_code&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max,sunrise,sunset&timezone=auto&forecast_days=5&forecast_hours=12";
@@ -290,10 +331,11 @@ void drawPage(int page){
   DeskView v;struct tm t;char clock[6]="--:--",date[32]="Waiting for time",period[3]="";
   if(getLocalTime(&t,5)){formatDisplayClock(t.tm_hour,t.tm_min,displayConfig.twelveHour,clock,sizeof(clock),period,sizeof(period));strftime(date,sizeof(date),"%A, %d %B",&t);}
   String countdown=timerText();String ip=setupMode?WiFi.softAPIP().toString():WiFi.localIP().toString();
-  v.clock=clock;v.date=date;v.city=cfgCity.c_str();v.countdown=countdown.c_str();v.ip=ip.c_str();
+  v.clock=clock;v.date=date;v.city=activeCity.c_str();v.countdown=countdown.c_str();v.ip=ip.c_str();
   v.connected=WiFi.status()==WL_CONNECTED;v.daily=weatherDaily;v.running=timerRunning;v.finished=timerFinished;
   v.oldData=makerOld();v.left=timerLeft();v.preset=timerPresetSec;v.brightness=cfgBrightness*100/255;
-  v.config=displayConfig;v.period=period;v.latitude=cfgLat;v.longitude=cfgLon;int zone=zonePresetIndex(cfgTZ.c_str());v.zone=zone<0?"Custom":ZonePresets[zone].name;
+  v.config=displayConfig;v.period=period;v.latitude=activeLat;v.longitude=activeLon;int zone=zonePresetIndex(activeTZ.c_str());v.zone=cfgAutoLocation&&autoLocation.valid?autoLocation.zone:(zone<0?"Custom":ZonePresets[zone].name);
+  v.automaticLocation=cfgAutoLocation;v.locationStatus=!cfgAutoLocation?"Tap city to choose":locationFailed?(autoLocation.valid?"Offline - last location":"Unavailable - manual fallback"):(autoLocation.valid?"Approximate internet location":"Locating - manual fallback");
   v.stopwatchMode=stopwatchMode;v.stopwatchRunning=stopwatch.running();v.stopwatchElapsed=stopwatch.elapsed(millis());
   DeskRenderer<DeviceSurface> renderer(surface);
   for(int top=0;top<240;top+=80){surface.top=top;renderer.render(page,v,weather,maker);surface.present();}
@@ -588,15 +630,15 @@ void handleTap(uint16_t x,uint16_t y){
     if(visualSettingTap(displayConfig,page,x,y)){applyColors();applyBrightness(true);savePrefs();lastMinuteDrawn=-1;redraw();return;}
     if(currentScreen==TIME_OPTIONS&&x>=16&&x<=304&&y>=108&&y<=158){
       int next=(zonePresetIndex(cfgTZ.c_str())+1)%4;cfgTZ=ZonePresets[next].rule;
-      configTzTime(cfgTZ.c_str(),"pool.ntp.org","time.nist.gov");applyBrightness(true);savePrefs();lastMinuteDrawn=-1;redraw();return;
+      setLocationMode(false);redraw();return;
     }
     if(currentScreen==WEATHER_OPTIONS){
-      if(x>=16&&x<=304&&y>=51&&y<=98){
+      if(y>=48&&y<=84&&x>=16&&x<=304){setLocationMode(x<160);redraw();return;}
+      if(x>=16&&x<=304&&y>=94&&y<=137){
         int next=(cityPresetIndex(cfgCity.c_str())+1)%5;cfgCity=CityPresets[next].name;
-        portENTER_CRITICAL(&locationMux);cfgLat=CityPresets[next].lat;cfgLon=CityPresets[next].lon;++locationRevision;portEXIT_CRITICAL(&locationMux);
-        weather=WeatherData();savePrefs();if(networkTaskHandle)xTaskNotifyGive(networkTaskHandle);redraw();return;
+        cfgLat=CityPresets[next].lat;cfgLon=CityPresets[next].lon;setLocationMode(false);redraw();return;
       }
-      if(x>=16&&x<=304&&y>=191&&y<=226){if(networkTaskHandle)xTaskNotifyGive(networkTaskHandle);redraw();return;}
+      if(x>=16&&x<=304&&y>=191&&y<=226){portENTER_CRITICAL(&locationMux);requestLocation=cfgAutoLocation;portEXIT_CRITICAL(&locationMux);if(networkTaskHandle)xTaskNotifyGive(networkTaskHandle);redraw();return;}
     }
     return;
   }
@@ -662,16 +704,24 @@ void setup(){
   pinMode(TFT_BL,OUTPUT);applyBrightness(true);
   SPI.begin(T_CLK,T_DOUT,T_DIN);ts.begin();ts.setRotation(1);
   lcd.fillScreen(C_BG);textAt("Universal Desk Dashboard",32,102);textAt("Starting...",126,130,1,C_MUTED);
-  connectWiFi();
+  connectWiFi();applyLocation(cfgAutoLocation,true);
+  locationQueue=xQueueCreate(1,sizeof(LocationUpdate));
   weatherQueue=xQueueCreate(1,sizeof(WeatherUpdate));makerQueue=xQueueCreate(1,sizeof(MakerData));
-  if(weatherQueue && makerQueue)xTaskCreatePinnedToCore(networkTask,"dashboard-network",12288,nullptr,1,&networkTaskHandle,0);
-  if(!setupMode && WiFi.status()==WL_CONNECTED){configTzTime(cfgTZ.c_str(),"pool.ntp.org","time.nist.gov");redraw();}
+  if(weatherQueue && makerQueue && locationQueue)xTaskCreatePinnedToCore(networkTask,"dashboard-network",12288,nullptr,1,&networkTaskHandle,0);
+  if(!setupMode && WiFi.status()==WL_CONNECTED){configTzTime(activeTZ.c_str(),"pool.ntp.org","time.nist.gov");redraw();}
   else{scanWifiNetworks();currentScreen=WIFI_LIST;drawWifiList();}
 }
 void loop(){
   stopwatch.tick(millis());applyBrightness();
   if(setupMode)dns.processNextRequest();server.handleClient();handleTouch();
-  bool changed=false;WeatherUpdate w;MakerData m;
+  bool changed=false;WeatherUpdate w;MakerData m;LocationUpdate location;
+  if(locationQueue&&xQueueReceive(locationQueue,&location,0)==pdTRUE&&cfgAutoLocation&&location.revision==locationRevision){
+    locationFailed=!location.ok;changed=true;
+    if(location.ok){
+      bool different=!autoLocation.valid||strcmp(autoLocation.city,location.data.city)||strcmp(autoLocation.zone,location.data.zone)||strcmp(autoLocation.rule,location.data.rule)||autoLocation.lat!=location.data.lat||autoLocation.lon!=location.data.lon;
+      autoLocation=location.data;if(different){applyLocation(cfgAutoLocation);cacheLocation();}
+    }
+  }
   if(weatherQueue && xQueueReceive(weatherQueue,&w,0)==pdTRUE&&w.location==locationRevision){weather=w.data;changed=true;}
   if(makerQueue && xQueueReceive(makerQueue,&m,0)==pdTRUE){maker=m;changed=true;}
   if(timerRunning && !timerLeft()){timerRunning=false;timerFinished=true;timerDurationSec=0;changed=true;}

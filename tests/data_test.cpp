@@ -1,12 +1,30 @@
 #include "DashboardData.h"
 #include "Stopwatch.h"
 #include "DisplaySettings.h"
+#include "LocationSettings.h"
+#include <cstdlib>
+#include <ctime>
 #include <cassert>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 static JsonDocument json(const char* value) {JsonDocument d; assert(!deserializeJson(d,value));return d;}
 int main(int argc,char** argv){
+  AutoLocation loc;
+  auto geo=json(R"({"success":true,"city":"Brno","latitude":49.1951,"longitude":16.6068,"timezone":{"id":"Europe/Prague","offset":7200}})");
+  assert(parseAutoLocation(geo,loc)&&loc.valid&&!strcmp(loc.city,"Brno"));
+  setenv("TZ",loc.rule,1);tzset();
+  time_t winter=1767225600,summer=1782864000;struct tm local{};
+  localtime_r(&winter,&local);assert(local.tm_hour==1);localtime_r(&summer,&local);assert(local.tm_hour==2);
+  geo["success"]=false;assert(!parseAutoLocation(geo,loc)&&loc.valid&&!strcmp(loc.city,"Brno"));
+  geo["success"]=true;geo["latitude"]=91;assert(!parseAutoLocation(geo,loc));
+  geo["latitude"]=49;geo["timezone"].remove("offset");assert(!parseAutoLocation(geo,loc));
+  geo["timezone"]["offset"]=20700;geo["timezone"]["id"]="Asia/Kathmandu";assert(parseAutoLocation(geo,loc));
+  setenv("TZ",loc.rule,1);tzset();localtime_r(&winter,&local);assert(local.tm_hour==5&&local.tm_min==45);
+  geo["timezone"]["offset"]=-12600;geo["timezone"]["id"]="Test/West";assert(parseAutoLocation(geo,loc));
+  setenv("TZ",loc.rule,1);tzset();localtime_r(&winter,&local);assert(local.tm_hour==20&&local.tm_min==30);
+  assert(!validCoordinates(NAN,0)&&!validCoordinates(0,181)&&validCoordinates(-90,-180));
+  setenv("TZ","UTC0",1);tzset();
   DisplayConfig cfg;
   assert(displayBrightness(cfg,23)==180);
   cfg.nightDim=true;
