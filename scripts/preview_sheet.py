@@ -3,11 +3,11 @@ from pathlib import Path
 from PIL import Image,ImageDraw,ImageFont
 root=Path(__file__).resolve().parents[1]
 names=['Clock','Apps','Weather','Focus','MakerWorld','Settings']
-sheet=Image.new('RGB',(1000,560),'#e9edf2');draw=ImageDraw.Draw(sheet)
+sheet=Image.new('RGB',(1000,560),'#090a0c');draw=ImageDraw.Draw(sheet)
 font=ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',14)
 for i,name in enumerate(names):
     frame=Image.open(root/f'tests/previews/page-{i}.ppm')
     x=12+i%3*330;y=26+i//3*263;sheet.paste(frame,(x,y))
-    draw.text((x,y-20),name,font=font,fill='#596473')
-draw.text((12,540),'Software rendering preview · sample screen data · native resolution 320 × 240',font=font,fill='#596473')
+    draw.text((x,y-20),name,font=font,fill='#959aa5')
+draw.text((12,540),'Dark theme · software rendering · sample screen data · native resolution 320 × 240',font=font,fill='#959aa5')
 sheet.save(root/'design/UI-preview.png')
