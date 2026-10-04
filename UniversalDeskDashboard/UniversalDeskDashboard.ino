@@ -9,6 +9,7 @@
 #include <time.h>
 #include "DashboardData.h"
 #include "DeskUI.h"
+#include "Stopwatch.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
@@ -71,6 +72,8 @@ uint32_t timerDurationSec = 25 * 60;
 unsigned long lastDraw = 0, lastTouch = 0;
 uint32_t timerPresetSec=25*60;
 bool timerFinished=false;
+bool stopwatchMode=false;
+Stopwatch stopwatch;
 int lastMinuteDrawn = -1;
 
 // Preserve the verified ST7789 inversion setting used on this CYD2USB.
@@ -260,6 +263,7 @@ void drawPage(int page){
   v.clock=clock;v.date=date;v.city=cfgCity.c_str();v.countdown=countdown.c_str();v.ip=ip.c_str();
   v.connected=WiFi.status()==WL_CONNECTED;v.daily=weatherDaily;v.running=timerRunning;v.finished=timerFinished;
   v.oldData=makerOld();v.left=timerLeft();v.preset=timerPresetSec;v.brightness=cfgBrightness*100/255;
+  v.stopwatchMode=stopwatchMode;v.stopwatchRunning=stopwatch.running();v.stopwatchElapsed=stopwatch.elapsed(millis());
   DeskRenderer<DeviceSurface> renderer(surface);
   for(int top=0;top<240;top+=80){surface.top=top;renderer.render(page,v,weather,maker);surface.present();}
 }
@@ -550,6 +554,15 @@ void handleTap(uint16_t x,uint16_t y){
 
   if(currentScreen==TIMER){
     if(y<45 && x<60){ currentScreen=HOME; redraw(); return; }
+    if(y<45 && x>=260){stopwatchMode=!stopwatchMode;redraw();return;}
+    if(stopwatchMode){
+      if(y>=161 && y<=195){
+        if(x>=199 && x<=266)stopwatch.reset(millis());
+        else if(x>=54 && x<=189){if(stopwatch.running())stopwatch.pause(millis());else stopwatch.start(millis());}
+        redraw();
+      }
+      return;
+    }
 
     if(y>=161 && y<=195){
       if(x>=199 && x<=266){timerRunning=false;timerFinished=false;timerDurationSec=timerPresetSec;}
@@ -607,6 +620,7 @@ void setup(){
   else{scanWifiNetworks();currentScreen=WIFI_LIST;drawWifiList();}
 }
 void loop(){
+  stopwatch.tick(millis());
   if(setupMode)dns.processNextRequest();server.handleClient();handleTouch();
   bool changed=false;WeatherData w;MakerData m;
   if(weatherQueue && xQueueReceive(weatherQueue,&w,0)==pdTRUE){weather=w;changed=true;}
@@ -614,7 +628,7 @@ void loop(){
   if(timerRunning && !timerLeft()){timerRunning=false;timerFinished=true;timerDurationSec=0;changed=true;}
   struct tm t;
   if(currentScreen==HOME && getLocalTime(&t,5) && t.tm_min!=lastMinuteDrawn){lastMinuteDrawn=t.tm_min;changed=true;}
-  if(currentScreen==TIMER && timerRunning && millis()-lastDraw>=1000)changed=true;
+  if(currentScreen==TIMER && ((stopwatchMode && stopwatch.running() && millis()-lastDraw>=100) || (!stopwatchMode && timerRunning && millis()-lastDraw>=1000)))changed=true;
   if(changed && currentScreen<=SETTINGS)redraw();
   delay(10);
 }

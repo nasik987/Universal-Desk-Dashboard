@@ -1,6 +1,7 @@
 #pragma once
 #include "DeskAssets.h"
 #include "DeskTheme.h"
+#include "StopwatchIcon.h"
 #include "DashboardData.h"
 #include <math.h>
 #include <string.h>
@@ -11,6 +12,8 @@ struct DeskView {
   const char* countdown="25:00"; const char* ip="";
   bool connected=false, daily=false, running=false, finished=false, oldData=false;
   uint32_t left=1500,preset=1500; int brightness=70;
+  bool stopwatchMode=false, stopwatchRunning=false;
+  uint64_t stopwatchElapsed=0;
 };
 
 // Shared production renderer: native previews and the ESP32 use these same pixels.
@@ -62,6 +65,10 @@ template<class Surface> class DeskRenderer {
       s.fillRect(x+col,y+row,1,1,color);s.fillRect(x+w-col-1,y+row,1,1,color);
     }
   }
+  void tile(int x,int y,int w,int h,int r){
+    round(x,y,w,h,r,DeskTheme::outline,paper);
+    round(x+1,y+1,w-2,h-2,r-1,panel,DeskTheme::outline);
+  }
   void dots(int page){for(int i=0;i<6;i++)round(132+i*10,231,i==page?6:4,4,2,i==page?blue:line,paper);}
   void header(const char* title){icon(IconBack24,12,10,muted,paper);center(title,160,28,FontTitle,ink,paper);}
   const AAIcon& weatherIcon(int code){
@@ -103,7 +110,7 @@ public:
       }
     }else if(page==1){
       header("");const AAIcon* icons[]={&IconWeather44,&IconFocus44,&IconStats44,&IconSettings44};
-      for(int i=0;i<4;i++){int x=16+(i%2)*152,y=43+(i/2)*91;round(x,y,136,82,18,panel,paper);icon(*icons[i],x+46,y+19,blue,panel);}
+      for(int i=0;i<4;i++){int x=16+(i%2)*152,y=43+(i/2)*91;tile(x,y,136,82,18);icon(*icons[i],x+46,y+19,blue,panel);}
     }else if(page==2){
       header(v.city);temp(b,sizeof(b),w.valid,w.temp);text(b,18,78,FontMetric,ink,paper);
       if(w.valid){temp(a,sizeof(a),true,w.feels);snprintf(b,sizeof(b),"Feels %s  ·  %d%% humidity",a,w.humidity);icon(weatherIcon(w.code),280,50,blue,paper);}
@@ -131,18 +138,31 @@ public:
       text(v.daily?"Hourly  ›":"5 days  ›",253,222,FontSmall,blue,paper);
       if(w.failed)text("Update failed",18,222,FontSmall,muted,paper);
     }else if(page==3){
-      header("Focus");center(v.countdown,160,121,FontFocus,ink,paper);
+      header(v.stopwatchMode?"Stopwatch":"Focus");
+      tile(274,6,36,32,10);icon(v.stopwatchMode?IconHourglass24:IconStopwatch24,280,10,blue,panel);
+      if(v.stopwatchMode){
+        uint64_t seconds=v.stopwatchElapsed/1000,hours=seconds/3600;
+        if(hours)snprintf(b,sizeof(b),"%llu:%02u:%02u",(unsigned long long)hours,(unsigned)(seconds/60%60),(unsigned)(seconds%60));
+        else snprintf(b,sizeof(b),"%02u:%02u",(unsigned)(seconds/60),(unsigned)(seconds%60));
+        center(b,160,121,width(b,FontFocus)<=284?FontFocus:FontMetric,ink,paper);
+        snprintf(b,sizeof(b),".%02u",(unsigned)(v.stopwatchElapsed/10%100));center(b,160,147,FontTitle,muted,paper);
+        round(54,161,135,34,16,blue,paper);tile(199,161,67,34,16);
+        icon(v.stopwatchRunning?IconPause24:IconPlay24,109,166,ink,blue);icon(IconReset24,220,166,muted,panel);
+        center(v.stopwatchRunning?"Running":(v.stopwatchElapsed?"Paused":"Ready"),160,219,FontBody,muted,paper);
+      }else{
+      center(v.countdown,160,121,FontFocus,ink,paper);
       center(v.running?"Focus time":(v.finished?"Complete":(v.left==v.preset?"Ready":"Paused")),160,146,FontBody,muted,paper);
       round(70,151,180,3,1,line,paper);if(v.preset && v.left){int n=(int)(180.0*v.left/v.preset);if(n>180)n=180;if(n<3)n=3;round(70,151,n,3,1,blue,line);}
-      round(54,161,135,34,16,blue,paper);round(199,161,67,34,16,panel,paper);
+      round(54,161,135,34,16,blue,paper);tile(199,161,67,34,16);
       icon(v.running?IconPause24:IconPlay24,109,166,ink,blue);icon(IconReset24,220,166,muted,panel);
       const char* labels[]={"25 min","5 min","15 min"};int durations[]={1500,300,900};
       for(int i=0;i<3;i++){int x=32+i*90;round(x,202,76,25,12,panel,paper);center(labels[i],x+38,219,FontSmall,v.preset==(uint32_t)durations[i]?blue:muted,panel);}
+      }
     }else if(page==4){
       header("MakerWorld");text("Nasik",18,50,FontSmall,muted,paper);
       text(!m.valid?(m.failed?"Source unavailable":"Waiting for data"):(v.oldData?"Old data":(m.failed?"Update failed":"Latest measurement")),194,50,FontSmall,muted,paper);
       const AAIcon* icons[]={&IconPrinter24,&IconDownload24,&IconHeart24,&IconPeople24};int64_t values[]={m.latest.prints,m.latest.downloads,m.latest.likes,m.latest.followers};
-      for(int i=0;i<4;i++){int x=12+(i%2)*152,y=60+(i/2)*56;round(x,y,144,50,14,panel,paper);icon(*icons[i],x+12,y+13,muted,panel);number(b,sizeof(b),values[i]);text(b,x+47,y+34,FontMetric,ink,panel,x+136);}
+      for(int i=0;i<4;i++){int x=12+(i%2)*152,y=60+(i/2)*56;tile(x,y,144,50,14);icon(*icons[i],x+12,y+13,muted,panel);number(b,sizeof(b),values[i]);text(b,x+47,y+34,FontMetric,ink,panel,x+136);}
       text("Recent print totals",18,185,FontSmall,muted,paper);
       if(m.count>=2){int64_t lo=m.samples[0].prints,hi=lo;
         for(int i=1;i<m.count;i++){if(m.samples[i].prints<lo)lo=m.samples[i].prints;if(m.samples[i].prints>hi)hi=m.samples[i].prints;}
@@ -155,7 +175,7 @@ public:
     }else if(page==5){
       header("");const AAIcon* icons[]={&IconWifi24,&IconSun24,&IconStats24,&IconWeb24};
       const char* labels[]={"Wi-Fi",b,"MakerWorld","Web setup"};snprintf(b,sizeof(b),"%d%%",v.brightness);
-      for(int i=0;i<4;i++){int x=16+(i%2)*152,y=43+(i/2)*75;round(x,y,136,66,16,panel,paper);icon(*icons[i],x+56,y+9,blue,panel);center(labels[i],x+68,y+56,FontSmall,muted,panel);}
+      for(int i=0;i<4;i++){int x=16+(i%2)*152,y=43+(i/2)*75;tile(x,y,136,66,16);icon(*icons[i],x+56,y+9,blue,panel);center(labels[i],x+68,y+56,FontSmall,muted,panel);}
       center(v.ip,160,209,FontSmall,muted,paper);
     }
     if(page==6){header("Web setup");center("Open on your phone",160,100,FontBody,muted,paper);center(v.ip,160,138,FontTitle,ink,paper);center("Tap to return",160,192,FontSmall,muted,paper);}
