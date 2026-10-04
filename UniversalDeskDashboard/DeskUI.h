@@ -62,6 +62,10 @@ template<class Surface> class DeskRenderer {
       s.fillRect(x+col,y+row,1,1,color);s.fillRect(x+w-col-1,y+row,1,1,color);
     }
   }
+  void tile(int x,int y,int w,int h,int r){
+    round(x,y,w,h,r,DeskTheme::outline,paper);
+    round(x+1,y+1,w-2,h-2,r-1,panel,DeskTheme::outline);
+  }
   void dots(int page){for(int i=0;i<6;i++)round(132+i*10,231,i==page?6:4,4,2,i==page?blue:line,paper);}
   void header(const char* title){icon(IconBack24,12,10,muted,paper);center(title,160,28,FontTitle,ink,paper);}
   const AAIcon& weatherIcon(int code){
@@ -103,7 +107,7 @@ public:
       }
     }else if(page==1){
       header("");const AAIcon* icons[]={&IconWeather44,&IconFocus44,&IconStats44,&IconSettings44};
-      for(int i=0;i<4;i++){int x=16+(i%2)*152,y=43+(i/2)*91;round(x,y,136,82,18,panel,paper);icon(*icons[i],x+46,y+19,blue,panel);}
+      for(int i=0;i<4;i++){int x=16+(i%2)*152,y=43+(i/2)*91;tile(x,y,136,82,18);icon(*icons[i],x+46,y+19,blue,panel);}
     }else if(page==2){
       header(v.city);temp(b,sizeof(b),w.valid,w.temp);text(b,18,78,FontMetric,ink,paper);
       if(w.valid){temp(a,sizeof(a),true,w.feels);snprintf(b,sizeof(b),"Feels %s  ·  %d%% humidity",a,w.humidity);icon(weatherIcon(w.code),280,50,blue,paper);}
@@ -142,7 +146,7 @@ public:
       header("MakerWorld");text("Nasik",18,50,FontSmall,muted,paper);
       text(!m.valid?(m.failed?"Source unavailable":"Waiting for data"):(v.oldData?"Old data":(m.failed?"Update failed":"Latest measurement")),194,50,FontSmall,muted,paper);
       const AAIcon* icons[]={&IconPrinter24,&IconDownload24,&IconHeart24,&IconPeople24};int64_t values[]={m.latest.prints,m.latest.downloads,m.latest.likes,m.latest.followers};
-      for(int i=0;i<4;i++){int x=12+(i%2)*152,y=60+(i/2)*56;round(x,y,144,50,14,panel,paper);icon(*icons[i],x+12,y+13,muted,panel);number(b,sizeof(b),values[i]);text(b,x+47,y+34,FontMetric,ink,panel,x+136);}
+      for(int i=0;i<4;i++){int x=12+(i%2)*152,y=60+(i/2)*56;tile(x,y,144,50,14);icon(*icons[i],x+12,y+13,muted,panel);number(b,sizeof(b),values[i]);text(b,x+47,y+34,FontMetric,ink,panel,x+136);}
       text("Recent print totals",18,185,FontSmall,muted,paper);
       if(m.count>=2){int64_t lo=m.samples[0].prints,hi=lo;
         for(int i=1;i<m.count;i++){if(m.samples[i].prints<lo)lo=m.samples[i].prints;if(m.samples[i].prints>hi)hi=m.samples[i].prints;}
@@ -155,7 +159,7 @@ public:
     }else if(page==5){
       header("");const AAIcon* icons[]={&IconWifi24,&IconSun24,&IconStats24,&IconWeb24};
       const char* labels[]={"Wi-Fi",b,"MakerWorld","Web setup"};snprintf(b,sizeof(b),"%d%%",v.brightness);
-      for(int i=0;i<4;i++){int x=16+(i%2)*152,y=43+(i/2)*75;round(x,y,136,66,16,panel,paper);icon(*icons[i],x+56,y+9,blue,panel);center(labels[i],x+68,y+56,FontSmall,muted,panel);}
+      for(int i=0;i<4;i++){int x=16+(i%2)*152,y=43+(i/2)*75;tile(x,y,136,66,16);icon(*icons[i],x+56,y+9,blue,panel);center(labels[i],x+68,y+56,FontSmall,muted,panel);}
       center(v.ip,160,209,FontSmall,muted,paper);
     }
     if(page==6){header("Web setup");center("Open on your phone",160,100,FontBody,muted,paper);center(v.ip,160,138,FontTitle,ink,paper);center("Tap to return",160,192,FontSmall,muted,paper);}
